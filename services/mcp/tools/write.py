@@ -8,8 +8,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from ayon_mcp.app import mcp
-from ayon_mcp.connection import api
+from services.mcp.app import mcp
+from services.mcp.connection import api
 
 WRITABLE_ENTITY_TYPES = ("folder", "task", "product", "version")
 

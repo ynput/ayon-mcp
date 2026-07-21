@@ -4,9 +4,9 @@ from __future__ import annotations
 
 from typing import Any
 
-from ayon_mcp.app import mcp
-from ayon_mcp.connection import api
-from ayon_mcp.utils import collect
+from services.mcp.app import mcp
+from services.mcp.connection import api
+from services.mcp.utils import collect
 
 EVENT_FIELDS = {
     "id", "topic", "project", "user", "sender", "status",

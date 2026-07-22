@@ -13,7 +13,8 @@ dependencies = [
     "ayon-python-api>=1.0.10",
     "click~=8.4",
     "fastmcp>=3.4",
-    "httpx"
+    "httpx",
+    "loguru"
 ]
 
 [dependency-groups]

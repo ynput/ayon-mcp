@@ -15,7 +15,7 @@ dependencies = [
 ]
 
 [project.scripts]
-ayon-mcp = "server:main"
+ayon-mcp = "cli:main"
 
 [project.urls]
 Homepage = "https://ynput.io"

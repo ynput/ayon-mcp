@@ -2,86 +2,107 @@
 
 from __future__ import annotations
 
-import argparse
 import os
-from wsgiref import headers
 
-import click
 import httpx
 from fastmcp import FastMCP
-from fastmcp.experimental.server.openapi import MCPType, RouteMap
+from fastmcp.server.providers.openapi import MCPType, RouteMap
+
+from .instructions import INSTRUCTIONS
+from .registry import get_ayon_api, register_tools
 
 
-from services.mcp.app import mcp
-import services.mcp.tools  # noqa: F401  (registers all tools)
+def create_mcp_server(base_url: str, api_key: str) -> FastMCP:
+    """Run the MCP server with the given AYON server URL and API key.
 
-base_url = os.getenv("AYON_SERVER_URL", "http://localhost:5000")
-openapi_url = f"{base_url}/openapi.json"
-_headers = {"x-api-key": os.getenv("AYON_API_KEY", "")}
+    Args:
+        base_url: AYON server URL (e.g. http://localhost:5000)
+        api_key: AYON API key
 
+    Returns:
+        FastMCP instance configured with the AYON OpenAPI spec.
 
-command = click.Command()
-command.add_argument("--transport", type=click.Choice(["stdio", "http"]), default="stdio")
-command.add_argument("--host", default="127.0.0.1")
-command.add_argument("--port", type=int, default=8021)
-command.add_argument("--server-url", default=os.getenv("AYON_SERVER_URL"))
-command.add_argument("--api-key", default=os.getenv("AYON_API_KEY"))
-
-
-def main() -> None:
+    """
+    openapi_url = f"{base_url}/openapi.json"
+    headers = {"x-api-key": api_key or os.getenv("AYON_API_KEY", "")}
 
     # parse arguments
 
-
-    client = httpx.Client(base_url=base_url)
-    client.headers.update(_headers)
+    client = httpx.AsyncClient(base_url=base_url)
+    client.headers.update(headers)
 
     openapi_spec = httpx.get(
-        openapi_url, headers=_headers).raise_for_status().json()
+        openapi_url, headers=headers).raise_for_status().json()
+
+    semantic_maps = [
+    # GET requests with path parameters become ResourceTemplates
+    RouteMap(
+        methods=["GET"],
+        pattern=r".*\{.*\}.*",
+        mcp_type=MCPType.RESOURCE_TEMPLATE
+    ),
+    # All other GET requests become Resources
+    RouteMap(
+        methods=["GET"],
+        pattern=r".*",
+        mcp_type=MCPType.RESOURCE
+    ),
+]
 
     mcp = FastMCP.from_openapi(
         openapi_spec=openapi_spec,
         client=client,
         name="AYON MCP Server",
-        route_maps=[
-            RouteMap(mcp_type=MCPType.TOOL)
-        ]
+        instructions=INSTRUCTIONS,
+        route_maps=semantic_maps
     )
+
+    api = get_ayon_api(base_url, api_key)
+    register_tools(mcp, api)
+
+    return mcp
+
+
+def run_remote(base_url: str, api_key: str) -> FastMCP:
+    """Run the MCP server with the given AYON server URL and API key.
+
+    Args:
+        base_url: AYON server URL (e.g. http://localhost:5000)
+        api_key: AYON API key
+
+    Returns:
+        FastMCP instance configured with the AYON OpenAPI spec.
+
+    """
+    mcp = create_mcp_server(base_url, api_key)
+    mcp.run(
+        transport="streamable-http",
+        host="0.0.0.0",
+        port=int(
+                base_url.rsplit(":", maxsplit=1)[-1]
+            ) if ":" in base_url else 5000
+    )
+    return mcp
+
+
+def run_local(base_url: str, api_key: str) -> FastMCP:
+    """Run the MCP server with the given AYON server URL and API key.
+
+    Args:
+        base_url: AYON server URL (e.g. http://localhost:5000)
+        api_key: AYON API key
+
+    Returns:
+        FastMCP instance configured with the AYON OpenAPI spec.
+
+    """
+    mcp = create_mcp_server(base_url, api_key)
     mcp.run()
-
-def _main() -> None:
-    parser = argparse.ArgumentParser(
-        prog="ayon-mcp",
-        description=(
-            "MCP server for the AYON pipeline platform. Requires "
-            "AYON_SERVER_URL and AYON_API_KEY (environment variables "
-            "or CLI options)."
-        ),
-    )
-    parser.add_argument(
-        "--transport",
-        choices=("stdio", "http"),
-        default="stdio",
-        help="stdio for local clients (default), http for streamable HTTP",
-    )
-    parser.add_argument("--host", default="127.0.0.1", help="HTTP bind host")
-    parser.add_argument("--port", type=int, default=8021, help="HTTP bind port")
-    parser.add_argument("--server-url", help="AYON server URL (overrides AYON_SERVER_URL)")
-    parser.add_argument("--api-key", help="AYON API key (overrides AYON_API_KEY)")
-    args = parser.parse_args()
-
-    if args.server_url:
-        os.environ["AYON_SERVER_URL"] = args.server_url
-    if args.api_key:
-        os.environ["AYON_API_KEY"] = args.api_key
-
-    if args.transport == "http":
-        mcp.settings.host = args.host
-        mcp.settings.port = args.port
-        mcp.run(transport="streamable-http")
-    else:
-        mcp.run()
+    return mcp
 
 
 if __name__ == "__main__":
-    main()
+    run_local(
+        os.getenv("AYON_SERVER_URL", "http://localhost:5000"),
+        os.getenv("AYON_API_KEY", "")
+    )

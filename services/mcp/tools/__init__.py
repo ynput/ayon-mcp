@@ -1,6 +1,5 @@
-"""Tool modules. Importing this package registers all tools on the app."""
+"""Tool modules."""
 
-from services.mcp.tools import write
-from services.mcp.tools import entities, events, projects, settings
+from .utils import register_tools
 
-__all__ = ["entities", "events", "projects", "settings", "write"]
+__all__ = ["register_tools"]

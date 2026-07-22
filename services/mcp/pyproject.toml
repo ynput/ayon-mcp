@@ -4,26 +4,21 @@ version = "0.1.0"
 description = "MCP server exposing the AYON pipeline platform to AI assistants"
 readme = "README.md"
 authors = [
-    { name = "Milan Kolar", email = "milan@ynput.io" }
+    { name = "Ynput Team", email = "team@ynput.io" }
 ]
 license = "Apache-2.0"
 requires-python = ">=3.10"
 keywords = ["ayon", "mcp", "pipeline", "vfx"]
 dependencies = [
+    "loguru",
+    "httpx",
     "ayon-python-api>=1.0.10",
     "fastmcp>=3.4",
 ]
 
-[project.scripts]
-ayon-mcp = "cli:main"
-
 [project.urls]
 Homepage = "https://ynput.io"
 Repository = "https://github.com/ynput/ayon-mcp"
-
-[build-system]
-requires = ["uv_build>=0.11.28,<0.12.0"]
-build-backend = "uv_build"
 
 [dependency-groups]
 dev = [

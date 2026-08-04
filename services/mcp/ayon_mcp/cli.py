@@ -33,7 +33,7 @@ DEFAULT_PORT = 5000
     default=None, help="AYON API key (or set AYON_API_KEY)")
 def main(
     host: str,
-    port: int,
+    port: int | None,
     api_key: str | None,
     *,
     remote: bool = False) -> None:
@@ -49,6 +49,19 @@ def main(
         click.UsageError: If required arguments are missing or invalid.
 
     """
+    if not port:  # ruff:ignore[collapsible-if]
+        # If port is not provided, try to get it from the host
+        # to support both "http://localhost:5000" and "http://localhost" formats.
+        if ":" in host:
+            host, port_str = host.rsplit(":", 1)
+            try:
+                port = int(port_str)
+            except ValueError as e:
+                msg = (
+                    f"Invalid port number in host URL: {port_str!r}. "
+                    "Port must be an integer.")
+                raise click.UsageError(msg) from e
+
     server_url = f"{host}:{port}"
     if not api_key:
         api_key = os.getenv(KEY_ENV_VAR)

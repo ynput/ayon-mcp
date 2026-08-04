@@ -25,13 +25,41 @@ user if you only want read access.
 
 ## Usage
 
+## VSCode
+You can manually configure MCP servers by editing the mcp.json file. There are two locations for this file:
+
+Workspace: create or open .vscode/mcp.json in your project. Include this file in source control to share MCP server configurations with your team.
+User profile: run the MCP: Open User Configuration command to open the mcp.json file in your user profile folder. Servers configured here are available across all your workspaces. When you use multiple profiles, each profile can have its own MCP server configuration.
+You can also run MCP: Add Server in the Command Palette (Ctrl+Shift+P) to add a server through a guided flow, choosing either Workspace or Global as the target.
+
+Add following:
+```json
+{
+  "servers": {
+    "ayon-mcp": {
+      "type": "stdio",
+      "command": "powershell",
+      "args": [
+        "path/to/ayon-mcp-repo/scripts/start_local.ps1",
+        "--api-key", "${ayon_api_key}",
+				"--host", "${ayon_server}$",
+				"--port", "${ayon_port}"
+      ],
+      "env": {
+
+      }
+    }
+  }
+}
+```
+
 ### Claude Code
 
 ```sh
-claude mcp add ayon \
-  -e AYON_SERVER_URL=http://localhost:5001 \
+claude mcp add ayon-mcp \
+  -e AYON_SERVER_URL=http://localhost:5000 \
   -e AYON_API_KEY=your-api-key \
-  -- uv run --directory /path/to/ayon-mcp ayon-mcp
+  -- powershell "path/to/ayon-mcp-repo/scripts/start_local.ps1"
 ```
 
 ### Claude Desktop

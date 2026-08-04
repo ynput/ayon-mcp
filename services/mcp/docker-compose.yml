@@ -1,0 +1,13 @@
+services:
+  mcp:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: ayon-mcp-service
+    ports:
+      - "8088:8088"
+    environment:
+      AYON_SERVER_URL: ${AYON_SERVER_URL:?Set AYON_SERVER_URL in your environment or .env}
+      AYON_API_KEY: ${AYON_API_KEY:?Set AYON_API_KEY in your environment or .env}
+      FASTMCP_EXPERIMENTAL_ENABLE_NEW_OPENAPI_PARSER: "1"
+    restart: unless-stopped

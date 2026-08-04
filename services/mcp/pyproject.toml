@@ -14,7 +14,12 @@ dependencies = [
     "httpx",
     "ayon-python-api>=1.0.10",
     "fastmcp>=3.4",
+    "pydantic>=2.7",
+    "click>=8.2",
 ]
+
+[project.scripts]
+ayon-mcp = "services.mcp.ayon_mcp.cli:main"
 
 [project.urls]
 Homepage = "https://ynput.io"
@@ -25,3 +30,10 @@ dev = [
     "pytest>=8",
     "pytest-asyncio>=0.24",
 ]
+
+[build-system]
+requires = ["uv_build>=0.12.1,<0.13"]
+build-backend = "uv_build"
+
+[tool.uv]
+package = true

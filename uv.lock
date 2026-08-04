@@ -19,7 +19,7 @@ resolution-markers = [
     "python_full_version < '3.11' and sys_platform != 'win32'",
 ]
 dependencies = [
-    { name = "caio", marker = "python_full_version < '3.11'" },
+    { name = "caio" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/67/e2/d7cb819de8df6b5c1968a2756c3cb4122d4fa2b8fc768b53b7c9e5edb646/aiofile-3.9.0.tar.gz", hash = "sha256:e5ad718bb148b265b6df1b3752c4d1d83024b93da9bd599df74b9d9ffcf7919b", size = 17943, upload-time = "2024-10-08T10:39:35.846Z" }
 wheels = [
@@ -37,7 +37,7 @@ resolution-markers = [
     "python_full_version >= '3.11' and python_full_version < '3.14' and sys_platform != 'win32'",
 ]
 dependencies = [
-    { name = "caio", marker = "python_full_version >= '3.11'" },
+    { name = "caio" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/48/41/2fea7e193e061ce54eacc3b7bc0e6a99e4fcff43c78cf0a76dd781ed8334/aiofile-3.11.1.tar.gz", hash = "sha256:1f91912c6643d2a4e49ca4ae3514f0bf3867ce948a36d99a6411b8f4755f4cf9", size = 19342, upload-time = "2026-05-16T08:18:33.538Z" }
 wheels = [
@@ -99,6 +99,8 @@ dependencies = [
     { name = "fastmcp" },
     { name = "httpx" },
     { name = "loguru" },
+    { name = "mcp" },
+    { name = "pytest-print" },
 ]
 
 [package.dev-dependencies]
@@ -116,6 +118,8 @@ requires-dist = [
     { name = "fastmcp", specifier = ">=3.4" },
     { name = "httpx" },
     { name = "loguru" },
+    { name = "mcp", specifier = ">=1.28.1" },
+    { name = "pytest-print", specifier = ">=1.3.0" },
 ]
 
 [package.metadata.requires-dev]
@@ -680,7 +684,7 @@ name = "importlib-metadata"
 version = "9.0.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "zipp", marker = "python_full_version < '3.14'" },
+    { name = "zipp" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/a9/01/15bb152d77b21318514a96f43af312635eb2500c96b55398d020c93d86ea/importlib_metadata-9.0.0.tar.gz", hash = "sha256:a4f57ab599e6a2e3016d7595cfd72eb4661a5106e787a95bcc90c7105b831efc", size = 56405, upload-time = "2026-03-20T06:42:56.999Z" }
 wheels = [
@@ -1204,6 +1208,18 @@ wheels = [
 ]
 
 [[package]]
+name = "pytest-print"
+version = "1.3.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "pytest" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/44/bf/35fd4165ece4e01dae7b25e728072d7cafc112b9da8655e59bb504f45e76/pytest_print-1.3.0.tar.gz", hash = "sha256:a507008f50d8190842aaf71c8e979b5bc7787839f4bd3140f47a62200b5d5b62", size = 13035, upload-time = "2026-07-21T13:10:05.421Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/38/4b/882e49e34c4c1df7e68ed83a6731f85dfd1c55e41fce3f01735c10c65109/pytest_print-1.3.0-py3-none-any.whl", hash = "sha256:0d91880e96de468fecbe02b14a6f52b74088dc11693985514edc848260641e40", size = 7044, upload-time = "2026-07-21T13:10:04.052Z" },
+]
+
+[[package]]
 name = "python-dotenv"
 version = "1.2.2"
 source = { registry = "https://pypi.org/simple" }
@@ -1660,8 +1676,8 @@ name = "secretstorage"
 version = "3.5.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "cryptography", marker = "sys_platform != 'win32'" },
-    { name = "jeepney", marker = "sys_platform != 'win32'" },
+    { name = "cryptography" },
+    { name = "jeepney" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/1c/03/e834bcd866f2f8a49a85eaff47340affa3bfa391ee9912a952a1faa68c7b/secretstorage-3.5.0.tar.gz", hash = "sha256:f04b8e4689cbce351744d5537bf6b1329c6fc68f91fa666f60a380edddcd11be", size = 19884, upload-time = "2025-11-23T19:02:53.191Z" }
 wheels = [

@@ -51,7 +51,8 @@ def main(
     """
     if not port:  # ruff:ignore[collapsible-if]
         # If port is not provided, try to get it from the host
-        # to support both "http://localhost:5000" and "http://localhost" formats.
+        # to support both "http://localhost:5000"
+        # and "http://localhost" formats.
         if ":" in host:
             host, port_str = host.rsplit(":", 1)
             try:

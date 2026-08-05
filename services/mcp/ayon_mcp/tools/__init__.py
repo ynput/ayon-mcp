@@ -1,6 +1,7 @@
 """Tool modules."""
 from __future__ import annotations
 
+import os
 from typing import TYPE_CHECKING
 
 from .entities import (
@@ -39,6 +40,12 @@ from .write import (
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
 
+
+def _openapi_tools_enabled() -> bool:
+    """Return True if generated OpenAPI tools should be registered."""
+    value = (os.getenv("AYON_MCP_ENABLE_OPENAPI_TOOLS", "") or "").strip()
+    return value.lower() in {"1", "true", "yes", "on"}
+
 ALL_TOOLS: Sequence[Callable] = [  # ruff: ignore[non-empty-init-module]
     # entities
     get_folder_hierarchy,
@@ -72,6 +79,13 @@ ALL_TOOLS: Sequence[Callable] = [  # ruff: ignore[non-empty-init-module]
     delete_entity,
     add_comment,
 ]
+
+if _openapi_tools_enabled():
+    try:
+        from .openapi_generated import ALL_OPENAPI_TOOLS
+    except ImportError:
+        ALL_OPENAPI_TOOLS = []
+    ALL_TOOLS = [*ALL_TOOLS, *ALL_OPENAPI_TOOLS]
 
 __all__ = [
     "ALL_TOOLS",

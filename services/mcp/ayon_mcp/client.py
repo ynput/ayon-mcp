@@ -6,6 +6,7 @@ import ayon_api
 # ContextVar ensures thread/async-task safety
 _CLIENT_CV: ContextVar[ayon_api.ServerAPI | None] = ContextVar(
     "api_client", default=None)
+_API_KEY_CV: ContextVar[str | None] = ContextVar("api_key", default=None)
 
 
 def get_ayon_api(server_url: str, api_key: str) -> ayon_api.ServerAPI:
@@ -49,6 +50,36 @@ def set_global_ayon_client(client: ayon_api.ServerAPI) -> None:
 
     """
     _CLIENT_CV.set(client)
+
+
+def set_global_ayon_api_key(api_key: str) -> None:
+    """Set the AYON API key for the current execution context.
+
+    Args:
+        api_key: AYON API key used for the current request.
+
+    """
+    _API_KEY_CV.set(api_key)
+
+
+def get_global_ayon_api_key() -> str:
+    """Get the AYON API key for the current execution context.
+
+    Returns:
+        The AYON API key string for this request context.
+
+    Raises:
+        RuntimeError: If the API key has not been initialized in context.
+
+    """
+    api_key = _API_KEY_CV.get()
+    if not api_key:
+        msg = (
+            "AYON API key has not been initialized yet. "
+            "Call set_global_ayon_api_key() before using request-scoped auth."
+        )
+        raise RuntimeError(msg)
+    return api_key
 
 
 def get_global_ayon_client() -> ayon_api.ServerAPI:

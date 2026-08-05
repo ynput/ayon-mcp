@@ -3,35 +3,80 @@
 from __future__ import annotations
 
 import os
-from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING, AsyncIterator
 
-import httpx
 from fastmcp import FastMCP
+from fastmcp.server.dependencies import get_http_headers
 from fastmcp.server.lifespan import lifespan
-from fastmcp.server.providers.openapi import MCPType, RouteMap
+from fastmcp.server.middleware import CallNext, Middleware, MiddlewareContext
 
+# from fastmcp.server.providers.openapi import MCPType, RouteMap
+from .client import get_ayon_api, set_global_ayon_client
 from .instructions import INSTRUCTIONS
+from .rest_client import RestApiClient, set_global_rest_client
 from .tools import ALL_TOOLS
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterable
 
+    import mcp.types as mcp_types
 
-class RestApiClient:
-    """Wrapped shared HTTP client for server interaction."""
+
+class RemoteApiKeyMiddleware(Middleware):
+    """Resolve AYON API key from request headers for remote tool calls."""
+
+    def __init__(self, base_url: str):
+        """Initialize the middleware with the base URL.
+
+        Args:
+            base_url: The base URL of the AYON server.
+
+        """
+        self._base_url = base_url
+
+    async def on_call_tool(
+        self,
+        context: MiddlewareContext[mcp_types.CallToolRequestParams],
+        call_next: CallNext[mcp_types.CallToolRequestParams, object],
+    ) -> object:
+        """Inject request-scoped AYON client based on ``x-api-key`` header."""
+        from .client import set_global_ayon_api_key
+
+        headers = get_http_headers()
+        request_api_key = (headers.get("x-api-key") or "").strip()
+        if not request_api_key:
+            msg = (
+                "Missing required 'x-api-key' header in remote mode. "
+                "Provide a valid AYON API key with each MCP request."
+            )
+            raise RuntimeError(msg)
+
+        set_global_ayon_api_key(request_api_key)
+        set_global_ayon_client(get_ayon_api(self._base_url, request_api_key))
+        return await call_next(context)
+
+
+class StaticApiKeyMiddleware(Middleware):
+    """Use one configured AYON API key for local tool calls."""
 
     def __init__(self, base_url: str, api_key: str):
-        """Initialize the RestApiClient with base URL and API key."""
-        self.http_client = httpx.AsyncClient(
-            base_url=base_url,
-            headers={"x-api-key": api_key or os.getenv("AYON_API_KEY", "")},
-            timeout=30.0,
-        )
+        self._base_url = base_url
+        self._api_key = api_key
+        self._client = None
 
-    async def close(self):
-        """Close the underlying HTTP client."""
-        await self.http_client.aclose()
+    async def on_call_tool(
+        self,
+        context: MiddlewareContext[mcp_types.CallToolRequestParams],
+        call_next: CallNext[mcp_types.CallToolRequestParams, object],
+    ) -> object:
+        """Inject a lazily initialized AYON client for local mode."""
+        from .client import set_global_ayon_api_key
+
+        if self._client is None:
+            self._client = get_ayon_api(self._base_url, self._api_key)
+        set_global_ayon_api_key(self._api_key)
+        set_global_ayon_client(self._client)
+        return await call_next(context)
 
 
 def register_tools(server: FastMCP, tools: Iterable[Callable]) -> None:
@@ -40,12 +85,11 @@ def register_tools(server: FastMCP, tools: Iterable[Callable]) -> None:
         server.tool()(tool)
 
 
-def create_mcp_server(base_url: str, api_key: str) -> FastMCP:
-    """Run the MCP server with the given AYON server URL and API key.
+def create_mcp_server(base_url: str) -> FastMCP:
+    """Create the MCP server with the given AYON server URL.
 
     Args:
         base_url: AYON server URL (e.g. http://localhost:5000)
-        api_key: AYON API key
 
     Returns:
         FastMCP instance configured with the AYON OpenAPI spec.
@@ -63,17 +107,17 @@ def create_mcp_server(base_url: str, api_key: str) -> FastMCP:
             A dictionary containing the shared ApiClient instance.
 
         """
-        # Initialize shared client on startup
         client = RestApiClient(
-            base_url=base_url,
-            api_key=api_key or os.getenv("AYON_API_KEY", "")
+            base_url=base_url
         )
         try:
+            set_global_rest_client(client)
             # Pass to lifespan context
             yield {"api_client": client}
         finally:
             # Cleanup on shutdown
             await client.close()
+            set_global_rest_client(None)
 
 
     # mcp = FastMCP.from_openapi(
@@ -107,14 +151,12 @@ def run_remote(base_url: str, api_key: str) -> FastMCP:
         FastMCP instance configured with the AYON OpenAPI spec.
 
     """
-    mcp = create_mcp_server(base_url, api_key)
-    register_tools(mcp, ALL_TOOLS)
+    mcp = create_mcp_server(base_url)
+    mcp.add_middleware(RemoteApiKeyMiddleware(base_url))
     mcp.run(
         transport="streamable-http",
-        host="0.0.0.0",
-        port=int(
-                base_url.rsplit(":", maxsplit=1)[-1]
-            ) if ":" in base_url else 5000
+        host="0.0.0.0",  # ruff:ignore[hardcoded-bind-all-interfaces]
+        port=int(os.getenv("AYON_MCP_PORT", "8088")),
     )
     return mcp
 
@@ -130,7 +172,10 @@ def run_local(base_url: str, api_key: str) -> FastMCP:
         FastMCP instance configured with the AYON OpenAPI spec.
 
     """
-    mcp = create_mcp_server(base_url, api_key)
+    mcp = create_mcp_server(base_url)
+    mcp.add_middleware(
+        StaticApiKeyMiddleware(base_url, api_key or os.getenv("AYON_API_KEY", ""))
+    )
     mcp.run()
     return mcp
 

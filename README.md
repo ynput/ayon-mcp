@@ -46,12 +46,13 @@ Add following:
 				"--port", "${ayon_port}"
       ],
       "env": {
-
       }
     }
   }
 }
 ```
+
+On Linux and macOS, use `bash` with `scripts/start_local.sh` instead.
 
 ### Claude Code
 
@@ -60,6 +61,15 @@ claude mcp add ayon-mcp \
   -e AYON_SERVER_URL=http://localhost:5000 \
   -e AYON_API_KEY=your-api-key \
   -- powershell "path/to/ayon-mcp-repo/scripts/start_local.ps1"
+```
+
+On Linux and macOS:
+
+```sh
+claude mcp add ayon-mcp \
+  -e AYON_SERVER_URL=http://localhost:5000 \
+  -e AYON_API_KEY=your-api-key \
+  -- bash /path/to/ayon-mcp-repo/scripts/start_local.sh
 ```
 
 ### Claude Desktop
@@ -81,13 +91,11 @@ claude mcp add ayon-mcp \
 
 ### Streamable HTTP
 
-For remote or shared deployments:
+You can run docker container as a AYON service or locally.
+The MCP endpoint is then served at `http://<host>:8088/mcp`.
+The port can be changed using environment variable `AYON_MCP_PORT`
 
-```sh
-ayon-mcp --transport http --host 0.0.0.0 --port 8021
-```
 
-The MCP endpoint is then served at `http://<host>:8021/mcp`.
 
 ## Tools
 
@@ -101,6 +109,38 @@ The MCP endpoint is then served at `http://<host>:8021/mcp`.
 
 Write tools modify production data through the standard AYON operations
 endpoint, so server-side validation, permissions and events all apply.
+
+### Generated OpenAPI Tools (Optional)
+
+This repository can expose an additional auto-generated tool layer from
+`services/mcp/ayon_openapi.json`.
+
+- Generated code location:
+  `services/mcp/ayon_mcp/tools/openapi_generated/`
+- Generator script:
+  `services/mcp/scripts/generate_openapi_tools.py`
+- Transport client used by generated tools:
+  `RestApiClient` via `services/mcp/ayon_mcp/rest_client.py`
+
+By default, generated OpenAPI tools are **disabled**.
+
+Enable them by setting:
+
+- `AYON_MCP_ENABLE_OPENAPI_TOOLS=true`
+
+Accepted truthy values are: `1`, `true`, `yes`, `on` (case-insensitive).
+
+Regenerate after updating the OpenAPI spec:
+
+```sh
+c:/dev/ayon/repos/ayon-mcp/.venv/Scripts/python.exe services/mcp/scripts/generate_openapi_tools.py
+```
+
+Disable/remove strategy (to keep this easy to obsolete):
+
+1. Unset `AYON_MCP_ENABLE_OPENAPI_TOOLS` (or set to `false`) to disable at runtime.
+2. Delete `services/mcp/ayon_mcp/tools/openapi_generated/` if you want to remove generated code.
+3. Remove `services/mcp/scripts/generate_openapi_tools.py` if generation is no longer needed.
 
 ## Development
 

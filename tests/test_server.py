@@ -537,17 +537,25 @@ async def test_mcp_server_tools_list(printer_session: Printer):
     """Connect to a local MCP server via stdio and verify the exposed tool list."""
     import os
     import pathlib
+    import sys
     from ayon_mcp.tools import ALL_TOOLS
 
     printer_session("Starting local MCP server for tool listing test...")
 
-    server_script = pathlib.Path(__file__).parent.parent / "scripts" / "start_local.ps1"
+    scripts_dir = pathlib.Path(__file__).parent.parent / "scripts"
+    if sys.platform == "win32":
+        server_command = "powershell"
+        server_script = scripts_dir / "start_local.ps1"
+    else:
+        server_command = "bash"
+        server_script = scripts_dir / "start_local.sh"
+
     # The CLI requires a non-empty API key; use the env value or a placeholder since
     # no actual AYON API calls are made during tool listing.
     env = {**os.environ, "AYON_API_KEY": os.environ.get("AYON_API_KEY", "test-key-for-listing")}
 
     server_params = StdioServerParameters(
-        command="powershell",
+        command=server_command,
         args=[str(server_script)],
         env=env,
     )
@@ -568,3 +576,394 @@ async def test_mcp_server_tools_list(printer_session: Printer):
             printer_session(f"  {tool.name}: {tool.description}")
 
     assert expected_tools == tool_names
+
+
+# ---------------------------------------------------------------------------
+# tools/entities – list_tasks
+# ---------------------------------------------------------------------------
+
+class TestListTasks:
+    def test_returns_task_list(self, mock_api):
+        from ayon_mcp.tools.entities import list_tasks
+
+        mock_api.get_tasks.return_value = iter([
+            {
+                "id": "t1",
+                "name": "model",
+                "label": "Modeling",
+                "taskType": "Modeling",
+                "folderId": "f1",
+                "assignees": ["alice"],
+                "status": "In Progress",
+                "tags": [],
+                "active": True,
+            }
+        ])
+        result = list_tasks("demo")
+        assert result.count == 1
+        assert result.items[0].name == "model"
+        assert result.items[0].assignees == ["alice"]
+
+    def test_passes_filters_to_api(self, mock_api):
+        from ayon_mcp.tools.entities import list_tasks
+
+        mock_api.get_tasks.return_value = iter([])
+        list_tasks("demo", folder_id="f1", task_types=["Modeling"], assignees=["bob"])
+        call_kwargs = mock_api.get_tasks.call_args.kwargs
+        assert call_kwargs["folder_ids"] == ["f1"]
+        assert call_kwargs["task_types"] == ["Modeling"]
+        assert call_kwargs["assignees"] == ["bob"]
+
+    def test_truncation(self, mock_api):
+        from ayon_mcp.tools.entities import list_tasks
+
+        def _task(i):
+            return {
+                "id": f"t{i}", "name": f"task{i}", "label": None,
+                "taskType": "Compositing", "folderId": "f1",
+                "assignees": [], "status": "Todo", "tags": [], "active": True,
+            }
+
+        mock_api.get_tasks.return_value = iter([_task(i) for i in range(6)])
+        result = list_tasks("demo", limit=3)
+        assert result.count == 3
+        assert result.truncated is True
+
+
+# ---------------------------------------------------------------------------
+# tools/entities – list_products
+# ---------------------------------------------------------------------------
+
+class TestListProducts:
+    def test_returns_product_list(self, mock_api):
+        from ayon_mcp.tools.entities import list_products
+
+        mock_api.get_products.return_value = iter([
+            {
+                "id": "p1",
+                "name": "modelMain",
+                "productType": "model",
+                "folderId": "f1",
+                "status": "Approved",
+                "tags": [],
+                "active": True,
+            }
+        ])
+        result = list_products("demo")
+        assert result.count == 1
+        assert result.items[0].name == "modelMain"
+        assert result.items[0].product_type == "model"
+
+    def test_passes_filters_to_api(self, mock_api):
+        from ayon_mcp.tools.entities import list_products
+
+        mock_api.get_products.return_value = iter([])
+        list_products("demo", folder_id="f1", product_types=["render"], name_regex=".*beauty.*")
+        call_kwargs = mock_api.get_products.call_args.kwargs
+        assert call_kwargs["folder_ids"] == ["f1"]
+        assert call_kwargs["product_types"] == ["render"]
+        assert call_kwargs["product_name_regex"] == ".*beauty.*"
+
+    def test_none_folder_id_passes_none(self, mock_api):
+        from ayon_mcp.tools.entities import list_products
+
+        mock_api.get_products.return_value = iter([])
+        list_products("demo")
+        call_kwargs = mock_api.get_products.call_args.kwargs
+        assert call_kwargs["folder_ids"] is None
+
+
+# ---------------------------------------------------------------------------
+# tools/entities – list_versions
+# ---------------------------------------------------------------------------
+
+class TestListVersions:
+    def test_returns_version_list(self, mock_api):
+        from ayon_mcp.tools.entities import list_versions
+
+        mock_api.get_versions.return_value = iter([
+            {
+                "id": "v1",
+                "version": 3,
+                "productId": "p1",
+                "taskId": "t1",
+                "author": "alice",
+                "status": "Approved",
+                "tags": [],
+                "active": True,
+                "createdAt": "2024-01-01T00:00:00Z",
+            }
+        ])
+        result = list_versions("demo")
+        assert result.count == 1
+        assert result.items[0].version == 3
+        assert result.items[0].author == "alice"
+
+    def test_latest_only_flag(self, mock_api):
+        from ayon_mcp.tools.entities import list_versions
+
+        mock_api.get_versions.return_value = iter([])
+        list_versions("demo", latest_only=True)
+        call_kwargs = mock_api.get_versions.call_args.kwargs
+        assert call_kwargs["latest"] is True
+
+    def test_latest_false_when_not_latest_only(self, mock_api):
+        from ayon_mcp.tools.entities import list_versions
+
+        mock_api.get_versions.return_value = iter([])
+        list_versions("demo", latest_only=False)
+        call_kwargs = mock_api.get_versions.call_args.kwargs
+        assert call_kwargs["latest"] is None
+
+    def test_filters_by_product_id(self, mock_api):
+        from ayon_mcp.tools.entities import list_versions
+
+        mock_api.get_versions.return_value = iter([])
+        list_versions("demo", product_id="p1")
+        call_kwargs = mock_api.get_versions.call_args.kwargs
+        assert call_kwargs["product_ids"] == ["p1"]
+
+
+# ---------------------------------------------------------------------------
+# tools/entities – list_representations
+# ---------------------------------------------------------------------------
+
+class TestListRepresentations:
+    def test_returns_representation_list(self, mock_api):
+        from ayon_mcp.tools.entities import list_representations
+
+        mock_api.get_representations.return_value = iter([
+            {
+                "id": "r1",
+                "name": "exr",
+                "versionId": "v1",
+                "status": "Approved",
+                "tags": [],
+                "active": True,
+            }
+        ])
+        result = list_representations("demo")
+        assert result.count == 1
+        assert result.items[0].name == "exr"
+
+    def test_passes_names_filter(self, mock_api):
+        from ayon_mcp.tools.entities import list_representations
+
+        mock_api.get_representations.return_value = iter([])
+        list_representations("demo", names=["exr", "mov"])
+        call_kwargs = mock_api.get_representations.call_args.kwargs
+        assert call_kwargs["representation_names"] == ["exr", "mov"]
+
+    def test_include_files_adds_files_field(self, mock_api):
+        from ayon_mcp.tools.entities import list_representations
+
+        mock_api.get_representations.return_value = iter([])
+        list_representations("demo", include_files=True)
+        call_kwargs = mock_api.get_representations.call_args.kwargs
+        assert "files" in call_kwargs["fields"]
+
+    def test_exclude_files_by_default(self, mock_api):
+        from ayon_mcp.tools.entities import list_representations
+
+        mock_api.get_representations.return_value = iter([])
+        list_representations("demo")
+        call_kwargs = mock_api.get_representations.call_args.kwargs
+        assert "files" not in call_kwargs["fields"]
+
+
+# ---------------------------------------------------------------------------
+# tools/entities – get_entity
+# ---------------------------------------------------------------------------
+
+class TestGetEntity:
+    def test_returns_folder_model(self, mock_api):
+        from ayon_mcp.tools.entities import get_entity, Folder
+
+        mock_api.get_folder_by_id.return_value = {
+            "id": "f1",
+            "name": "shots",
+            "label": "Shots",
+            "path": "/shots",
+            "folderType": "Folder",
+            "parentId": None,
+            "status": "In Progress",
+            "tags": [],
+            "active": True,
+        }
+        result = get_entity("demo", "folder", "f1")
+        assert isinstance(result, Folder)
+        assert result.id == "f1"
+        assert result.name == "shots"
+
+    def test_returns_task_model(self, mock_api):
+        from ayon_mcp.tools.entities import get_entity, Task
+
+        mock_api.get_task_by_id.return_value = {
+            "id": "t1",
+            "name": "model",
+            "label": None,
+            "taskType": "Modeling",
+            "folderId": "f1",
+            "assignees": [],
+            "status": "Todo",
+            "tags": [],
+            "active": True,
+        }
+        result = get_entity("demo", "task", "t1")
+        assert isinstance(result, Task)
+        assert result.task_type == "Modeling"
+
+    def test_raises_on_unknown_entity_type(self, mock_api):
+        from ayon_mcp.tools.entities import get_entity
+
+        with pytest.raises(RuntimeError, match="Unknown entity_type"):
+            get_entity("demo", "scene", "x")
+
+    def test_raises_when_not_found(self, mock_api):
+        from ayon_mcp.tools.entities import get_entity
+
+        mock_api.get_folder_by_id.return_value = None
+        with pytest.raises(RuntimeError, match="not found"):
+            get_entity("demo", "folder", "missing-id")
+
+    def test_returns_version_model(self, mock_api):
+        from ayon_mcp.tools.entities import get_entity, Version
+
+        mock_api.get_version_by_id.return_value = {
+            "id": "v1",
+            "version": 1,
+            "productId": "p1",
+            "taskId": None,
+            "author": "bob",
+            "status": "Approved",
+            "tags": [],
+            "active": True,
+            "createdAt": "2024-01-01T00:00:00Z",
+        }
+        result = get_entity("demo", "version", "v1")
+        assert isinstance(result, Version)
+        assert result.version == 1
+
+
+# ---------------------------------------------------------------------------
+# tools/entities – query_graphql
+# ---------------------------------------------------------------------------
+
+class TestQueryGraphql:
+    def test_returns_data_on_success(self, mock_api):
+        from ayon_mcp.tools.entities import query_graphql
+
+        response = MagicMock()
+        response.errors = None
+        response.data = {"data": {"projects": [{"name": "demo"}]}}
+        mock_api.query_graphql.return_value = response
+
+        result = query_graphql("{ projects { name } }")
+        assert result == {"projects": [{"name": "demo"}]}
+
+    def test_raises_on_graphql_errors(self, mock_api):
+        from ayon_mcp.tools.entities import query_graphql
+
+        response = MagicMock()
+        response.errors = [{"message": "Field 'foo' not found"}]
+        mock_api.query_graphql.return_value = response
+
+        with pytest.raises(RuntimeError, match="GraphQL query failed"):
+            query_graphql("{ foo }")
+
+    def test_passes_variables_to_api(self, mock_api):
+        from ayon_mcp.tools.entities import query_graphql
+
+        response = MagicMock()
+        response.errors = None
+        response.data = {"data": {}}
+        mock_api.query_graphql.return_value = response
+
+        query_graphql("query Q($name: String!) { project(name: $name) { code } }", {"name": "demo"})
+        mock_api.query_graphql.assert_called_once_with(
+            "query Q($name: String!) { project(name: $name) { code } }",
+            {"name": "demo"},
+        )
+
+    def test_empty_data_key_returns_empty_dict(self, mock_api):
+        from ayon_mcp.tools.entities import query_graphql
+
+        response = MagicMock()
+        response.errors = None
+        response.data = {}
+        mock_api.query_graphql.return_value = response
+
+        result = query_graphql("{ version }")
+        assert result == {}
+
+
+# ---------------------------------------------------------------------------
+# tools/settings – get_addon_settings / set_addon_settings
+# ---------------------------------------------------------------------------
+
+class TestGetAddonSettings:
+    def test_returns_settings_dict(self, mock_api):
+        from ayon_mcp.tools.settings import get_addon_settings
+
+        mock_api.get_addon_settings.return_value = {"someKey": "someValue"}
+        result = get_addon_settings("core", "1.0.0")
+        assert result == {"someKey": "someValue"}
+
+    def test_passes_project_name_and_variant(self, mock_api):
+        from ayon_mcp.tools.settings import get_addon_settings
+
+        mock_api.get_addon_settings.return_value = {}
+        get_addon_settings("maya", "0.9.0", project_name="demo", variant="staging")
+        mock_api.get_addon_settings.assert_called_once_with(
+            "maya", "0.9.0",
+            project_name="demo",
+            variant="staging",
+            use_site=False,
+        )
+
+    def test_studio_level_by_default(self, mock_api):
+        from ayon_mcp.tools.settings import get_addon_settings
+
+        mock_api.get_addon_settings.return_value = {}
+        get_addon_settings("core", "1.0.0")
+        call_kwargs = mock_api.get_addon_settings.call_args.kwargs
+        assert call_kwargs["project_name"] is None
+        assert call_kwargs["variant"] == "production"
+
+
+class TestSetAddonSettings:
+    def test_returns_saved_response(self, mock_api):
+        from ayon_mcp.tools.settings import set_addon_settings
+
+        mock_response = MagicMock()
+        mock_response.raise_for_status.return_value = None
+        mock_api.raw_post.return_value = mock_response
+
+        result = set_addon_settings("core", "1.0.0", {"key": "val"})
+        assert result.saved is True
+        assert result.addon == "core 1.0.0"
+        assert result.level == "studio"
+        assert result.variant == "production"
+
+    def test_project_level_endpoint(self, mock_api):
+        from ayon_mcp.tools.settings import set_addon_settings
+
+        mock_response = MagicMock()
+        mock_response.raise_for_status.return_value = None
+        mock_api.raw_post.return_value = mock_response
+
+        result = set_addon_settings("maya", "0.9.0", {}, project_name="demo")
+        assert result.level == "project:demo"
+        endpoint_used = mock_api.raw_post.call_args.args[0]
+        assert "demo" in endpoint_used
+
+    def test_staging_variant_in_endpoint(self, mock_api):
+        from ayon_mcp.tools.settings import set_addon_settings
+
+        mock_response = MagicMock()
+        mock_response.raise_for_status.return_value = None
+        mock_api.raw_post.return_value = mock_response
+
+        set_addon_settings("core", "1.0.0", {}, variant="staging")
+        endpoint_used = mock_api.raw_post.call_args.args[0]
+        assert "staging" in endpoint_used

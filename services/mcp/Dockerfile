@@ -19,4 +19,4 @@ ENV PATH="/mcp-service/.venv/bin:$PATH"
 
 EXPOSE 8088
 
-CMD ["uvicorn", "ayon_mcp.app:app", "--reload", "--host", "0.0.0.0", "--port", "8088"]
+CMD ["uv", "run", "python", "-m", "ayon_mcp.app"]

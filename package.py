@@ -15,7 +15,7 @@ client_dir = None
 
 services = {
     "mcp": {
-        "image": "ynput/ayon-mcp",
+        "image": "ynput/ayon-mcp:dev",
     },
 }
 

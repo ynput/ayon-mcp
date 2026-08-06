@@ -24,6 +24,11 @@ from .projects import (
     get_server_info,
     list_projects,
 )
+from .rest import (
+    call_rest_endpoint,
+    get_rest_endpoint,
+    list_rest_endpoints,
+)
 from .settings import (
     get_addon_settings,
     list_addons,
@@ -73,6 +78,11 @@ ALL_TOOLS: Sequence[Callable] = [  # ruff: ignore[non-empty-init-module]
     update_entity,
     delete_entity,
     add_comment,
+
+    # rest gateway
+    list_rest_endpoints,
+    get_rest_endpoint,
+    call_rest_endpoint,
 ]
 
 
@@ -92,6 +102,7 @@ if openapi_tools_enabled():  # ruff: ignore[non-empty-init-module]
 __all__ = [
     "ALL_TOOLS",
     "add_comment",
+    "call_rest_endpoint",
     "create_entity",
     "delete_entity",
     "dispatch_event",
@@ -100,6 +111,7 @@ __all__ = [
     "get_event",
     "get_folder_hierarchy",
     "get_project",
+    "get_rest_endpoint",
     "get_server_info",
     "list_addons",
     "list_bundles",
@@ -108,6 +120,7 @@ __all__ = [
     "list_products",
     "list_projects",
     "list_representations",
+    "list_rest_endpoints",
     "list_tasks",
     "list_versions",
     "query_graphql",

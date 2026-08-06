@@ -9,6 +9,13 @@ or the `list_*` tools scoped to a project. Entity ids are hex strings;
 folder paths look like `/assets/characters/hero`. Write tools
 (`create_entity`, `update_entity`, `delete_entity`) modify production
 data — use them only when explicitly asked to change something.
+
+Anything not covered by a dedicated tool is reachable through the REST
+gateway: `list_rest_endpoints` to discover endpoints,
+`get_rest_endpoint` to inspect one endpoint's parameters and schemas,
+and `call_rest_endpoint` to execute it. Prefer dedicated tools when they
+cover the task, and treat POST/PUT/PATCH/DELETE endpoints as write
+operations — call them only when explicitly asked to change something.
 """
 
 
@@ -31,4 +38,3 @@ Safety rules:
 - For bulk operations, verify scope and intent because changes can affect
   production data.
 """
-

@@ -533,14 +533,12 @@ class TestListBundles:
 
 
 @pytest.mark.asyncio
-async def test_mcp_server_tools_list(printer_session: Printer):
+async def test_mcp_server_tools_list():
     """Connect to a local MCP server via stdio and verify the exposed tool list."""
     import os
     import pathlib
     import sys
     from ayon_mcp.tools import ALL_TOOLS
-
-    printer_session("Starting local MCP server for tool listing test...")
 
     scripts_dir = pathlib.Path(__file__).parent.parent / "scripts"
     if sys.platform == "win32":
@@ -571,9 +569,9 @@ async def test_mcp_server_tools_list(printer_session: Printer):
         tools_result = await session.list_tools()
         tool_names = sorted(tool.name for tool in tools_result.tools)
 
-        printer_session("\nMCP Server Tools:")
+        print("\nMCP Server Tools:")
         for tool in tools_result.tools:
-            printer_session(f"  {tool.name}: {tool.description}")
+            print(f"  {tool.name}: {tool.description}")
 
     assert expected_tools == tool_names
 

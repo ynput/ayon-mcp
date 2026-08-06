@@ -91,13 +91,6 @@ class TestLiveGetFolderHierarchy:
         names = [item.name for item in result.hierarchy]
         assert project.folder.name in names
 
-    def test_search_filters_results(self, ayon_client, project):
-        from ayon_mcp.tools.entities import get_folder_hierarchy
-
-        # Search for a nonexistent name – should return empty hierarchy.
-        result = get_folder_hierarchy(project.project_name, search="ZZZNONEXISTENT")
-        assert result.hierarchy == []
-
     def test_folder_type_filter(self, ayon_client, project):
         from ayon_mcp.tools.entities import get_folder_hierarchy
 

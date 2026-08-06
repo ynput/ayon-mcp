@@ -25,7 +25,7 @@ class RestApiClient:
         """Close the underlying HTTP client."""
         await self.http_client.aclose()
 
-    async def request(
+    async def request(  # ruff: ignore[too-many-arguments]
         self,
         method: str,
         path: str,
@@ -35,7 +35,21 @@ class RestApiClient:
         data: Any | None = None,
         headers: dict[str, str] | None = None,
     ) -> Any:
-        """Send a request and return parsed JSON when possible."""
+        """Send a request and return parsed JSON when possible.
+
+        Args:
+            method: HTTP method (GET, POST, etc.)
+            path: URL path for the request.
+            params: Query parameters for the request.
+            json: JSON body for the request.
+            data: Raw body for the request.
+            headers: Additional headers for the request.
+
+        Returns:
+            Parsed JSON response if content type is application/json,
+            otherwise raw text or None.
+
+        """
         request_headers = dict(headers or {})
         if "x-api-key" not in request_headers:
             request_headers["x-api-key"] = get_global_ayon_api_key()
@@ -65,7 +79,15 @@ def set_global_rest_client(client: RestApiClient | None) -> None:
 
 
 def get_global_rest_client() -> RestApiClient:
-    """Get the configured RestApiClient for generated OpenAPI tools."""
+    """Get the configured RestApiClient for generated OpenAPI tools.
+
+    Returns:
+        RestApiClient: The global RestApiClient instance.
+
+    Raises:
+        RuntimeError: If the RestApiClient has not been initialized yet.
+
+    """
     if _REST_CLIENT is None:
         msg = (
             "REST API client has not been initialized yet. "

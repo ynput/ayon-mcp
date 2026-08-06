@@ -41,11 +41,6 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
 
 
-def _openapi_tools_enabled() -> bool:
-    """Return True if generated OpenAPI tools should be registered."""
-    value = (os.getenv("AYON_MCP_ENABLE_OPENAPI_TOOLS", "") or "").strip()
-    return value.lower() in {"1", "true", "yes", "on"}
-
 ALL_TOOLS: Sequence[Callable] = [  # ruff: ignore[non-empty-init-module]
     # entities
     get_folder_hierarchy,
@@ -80,7 +75,14 @@ ALL_TOOLS: Sequence[Callable] = [  # ruff: ignore[non-empty-init-module]
     add_comment,
 ]
 
-if _openapi_tools_enabled():
+
+def openapi_tools_enabled() -> bool:  # ruff: ignore[non-empty-init-module]
+    """Return True if generated OpenAPI tools should be registered."""
+    value = (os.getenv("AYON_MCP_ENABLE_OPENAPI_TOOLS", "") or "").strip()
+    return value.lower() in {"1", "true", "yes", "on"}
+
+
+if openapi_tools_enabled():  # ruff: ignore[non-empty-init-module]
     try:
         from .openapi_generated import ALL_OPENAPI_TOOLS
     except ImportError:

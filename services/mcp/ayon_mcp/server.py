@@ -12,9 +12,9 @@ from fastmcp.server.middleware import CallNext, Middleware, MiddlewareContext
 
 # from fastmcp.server.providers.openapi import MCPType, RouteMap
 from .client import get_ayon_api, set_global_ayon_client
-from .instructions import INSTRUCTIONS
+from .instructions import INSTRUCTIONS, OPENAPI_INSTRUCTIONS
 from .rest_client import RestApiClient, set_global_rest_client
-from .tools import ALL_TOOLS
+from .tools import ALL_TOOLS, openapi_tools_enabled
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterable
@@ -119,7 +119,6 @@ def create_mcp_server(base_url: str) -> FastMCP:
             await client.close()
             set_global_rest_client(None)
 
-
     # mcp = FastMCP.from_openapi(
     #     openapi_spec=openapi_spec,
     #     validate_output=False,
@@ -129,10 +128,12 @@ def create_mcp_server(base_url: str) -> FastMCP:
     #     route_maps=semantic_maps
     # )
 
+    instructions = INSTRUCTIONS if not openapi_tools_enabled() else OPENAPI_INSTRUCTIONS
+
     mcp = FastMCP(
         lifespan=server_lifespan,
         name="AYON MCP Server",
-        instructions=INSTRUCTIONS,
+        instructions=instructions
     )
 
     register_tools(mcp, ALL_TOOLS)

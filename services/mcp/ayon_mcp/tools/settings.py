@@ -33,9 +33,12 @@ class BundleItem(_CamelModel):
         default=False, description="Bundle is staging")
     is_dev: bool = Field(
         default=False, description="Bundle is development")
-    addons: dict[str, str] = Field(
+    addons: dict[str, str | None] = Field(
         default_factory=dict,
-        description="Mapping of addon names to versions in the bundle",
+        description=(
+            "Mapping of addon names to versions in the bundle "
+            "(None when the addon has no version pinned)"
+        ),
     )
 
 

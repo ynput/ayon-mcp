@@ -24,13 +24,20 @@ DEFAULT_PORT = 5000
 @click.option(
     "--host", "-h",
     default=DEFAULT_HOST,
-    help="AYON server URL (or set AYON_SERVER_URL)")
+    envvar=HOST_ENV_VAR,
+    show_envvar=True,
+    help="AYON server URL",
+)
 @click.option(
     "--port", "-p",
     default=DEFAULT_PORT, type=int, help="AYON server port (default 5000)")
 @click.option(
     "--api-key",
-    default=None, help="AYON API key (or set AYON_API_KEY)")
+    default=None,
+    envvar=KEY_ENV_VAR,
+    show_envvar=True,
+    help="AYON API key"
+)
 def main(
     host: str,
     port: int | None,
@@ -66,18 +73,19 @@ def main(
     server_url = f"{host}:{port}"
     if not api_key:
         api_key = os.getenv(KEY_ENV_VAR)
-        if not api_key:
+        if not api_key and not remote:
             msg = (
-                "AYON API key is required in remote mode. "
+                "AYON API key is required in local mode. "
                 "Set the AYON_API_KEY environment variable "
                 "or pass it as --api-key.")
             raise click.UsageError(msg)
 
     if remote:
-        run_remote_server(server_url, api_key)
-    else:
-        # run in local mode
-        run_local_server(server_url, api_key)
+        run_remote_server(server_url)
+        return
+
+    # run in local mode
+    run_local_server(server_url, api_key)
 
 
 if __name__ == "__main__":

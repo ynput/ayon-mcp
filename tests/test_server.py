@@ -9,11 +9,6 @@ from mcp.client.stdio import stdio_client
 from unittest.mock import MagicMock
 
 import pytest
-from typing import TYPE_CHECKING
-
-if TYPE_CHECKING:
-    from pytest_print import Printer
-
 
 
 # ---------------------------------------------------------------------------
@@ -133,13 +128,13 @@ class TestCreateMcpServer:
         from fastmcp import FastMCP
         from ayon_mcp.server import create_mcp_server
 
-        mcp = create_mcp_server("http://localhost:5000", "dummy-key")
+        mcp = create_mcp_server("http://localhost:5000")
         assert isinstance(mcp, FastMCP)
 
     def test_server_has_correct_name(self):
         from ayon_mcp.server import create_mcp_server
 
-        mcp = create_mcp_server("http://localhost:5000", "dummy-key")
+        mcp = create_mcp_server("http://localhost:5000")
         assert mcp.name == "AYON MCP Server"
 
     def test_all_tools_are_registered(self):
@@ -147,7 +142,7 @@ class TestCreateMcpServer:
         from ayon_mcp.server import create_mcp_server
         from ayon_mcp.tools import ALL_TOOLS
 
-        mcp = create_mcp_server("http://localhost:5000", "dummy-key")
+        mcp = create_mcp_server("http://localhost:5000")
         registered = {t.name for t in asyncio.run(mcp.list_tools())}
         expected = {fn.__name__ for fn in ALL_TOOLS}
         assert expected == registered

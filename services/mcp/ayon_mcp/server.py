@@ -141,12 +141,11 @@ def create_mcp_server(base_url: str) -> FastMCP:
     return mcp
 
 
-def run_remote(base_url: str, api_key: str) -> FastMCP:
+def run_remote(base_url: str) -> FastMCP:
     """Run the MCP server with the given AYON server URL and API key.
 
     Args:
         base_url: AYON server URL (e.g. http://localhost:5000)
-        api_key: AYON API key
 
     Returns:
         FastMCP instance configured with the AYON OpenAPI spec.

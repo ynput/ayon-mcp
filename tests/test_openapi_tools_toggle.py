@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import importlib
+import pytest
 
 
 def _reload_tools_module():
@@ -27,6 +28,13 @@ def test_openapi_tools_registered_when_enabled(monkeypatch):
     base_names = {fn.__name__ for fn in base_tools_module.ALL_TOOLS}
 
     monkeypatch.setenv("AYON_MCP_ENABLE_OPENAPI_TOOLS", "true")
+
+    try:
+        import ayon_mcp.tools.openapi_generated  # noqa: F401
+    except ImportError:
+        pytest.skip("openapi_generated tools are not present; run the generator before enabling")
+
+
     enabled_tools_module = _reload_tools_module()
     enabled_names = {fn.__name__ for fn in enabled_tools_module.ALL_TOOLS}
 

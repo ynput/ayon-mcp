@@ -12,6 +12,7 @@ the spec and make them usable with FastMCP.
 """
 from __future__ import annotations
 
+import ast
 import json
 import keyword
 import re
@@ -410,6 +411,17 @@ def _package_init_source(groups: list[str]) -> str:
     )
 
 
+def _load_existing_tool_names(tools_init_path: Path) -> set[str]:
+    """Return names of all tools imported in tools/__init__.py."""
+    source = tools_init_path.read_text(encoding="utf-8")
+    tree = ast.parse(source)
+    names: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom):
+            names.update(alias.asname or alias.name for alias in node.names)
+    return names
+
+
 def _main() -> None:
     script_file = Path(__file__).resolve()
     project_root = script_file.parents[1]
@@ -419,7 +431,15 @@ def _main() -> None:
     with spec_path.open("r", encoding="utf-8") as stream:
         spec = json.load(stream)
 
+    existing_tool_names = _load_existing_tool_names(
+        project_root / "ayon_mcp" / "tools" / "__init__.py"
+    )
+
     operations = _collect_operations(spec)
+    for operation in operations:
+        if operation.operation_id in existing_tool_names:
+            operation.operation_id = f"openapi_{operation.operation_id}"
+
     groups: dict[str, list[Operation]] = defaultdict(list)
     for operation in operations:
         groups[operation.group].append(operation)

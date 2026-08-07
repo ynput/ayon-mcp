@@ -42,6 +42,7 @@ extra-paths = [
     "../ayon-core/client",
     "../ayon-docker/backend",
     "../ayon-python-api",
+    "./services/mcp",
 ]
 
 [tool.pytest.ini_options]

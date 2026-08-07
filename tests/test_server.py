@@ -9,11 +9,6 @@ from mcp.client.stdio import stdio_client
 from unittest.mock import MagicMock
 
 import pytest
-from typing import TYPE_CHECKING
-
-if TYPE_CHECKING:
-    from pytest_print import Printer
-
 
 
 # ---------------------------------------------------------------------------

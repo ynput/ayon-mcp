@@ -5,7 +5,7 @@ Requires the following environment variables:
     AYON_API_KEY     - a valid API key for the server
 
 Run with:
-    pytest -m integration -v tests/test_integration.py
+    pytest -m server -v tests/test_integration.py
 
 """
 from __future__ import annotations

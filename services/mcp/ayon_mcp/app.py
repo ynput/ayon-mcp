@@ -17,4 +17,4 @@ if not server_url or not api_key:
     )
 
 # Create FastMCP instance and register tools
-mcp = run_remote(server_url, api_key)
+mcp = run_remote(server_url)

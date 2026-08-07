@@ -2,8 +2,9 @@
 from __future__ import annotations
 
 import importlib
-import pytest
 import os
+
+import pytest
 
 def _reload_tools_module():
     import ayon_mcp.tools as tools_module
@@ -21,35 +22,49 @@ def restore_tools_module():
     yield
     os.environ.pop("AYON_MCP_ENABLE_OPENAPI_TOOLS", None)
     _reload_tools_module()
-    
 
 
-def test_openapi_tools_disabled_by_default(monkeypatch, restore_tools_module):
-    """Generated OpenAPI tools are not registered unless env flag is enabled."""
+def test_openapi_tools_enabled_by_default(monkeypatch, restore_tools_module):
+    """Generated OpenAPI tools are registered when env flag is not set."""
     monkeypatch.delenv("AYON_MCP_ENABLE_OPENAPI_TOOLS", raising=False)
-
-    tools_module = _reload_tools_module()
-    names = {fn.__name__ for fn in tools_module.ALL_TOOLS}
-
-    assert "get_access_group_schema" not in names
-
-@pytest.mark.usefixtures("restore_tools_module")
-def test_openapi_tools_registered_when_enabled(monkeypatch, restore_tools_module):
-    """Generated OpenAPI tools are appended when env flag is truthy."""
-    monkeypatch.delenv("AYON_MCP_ENABLE_OPENAPI_TOOLS", raising=False)
-    base_tools_module = _reload_tools_module()
-    base_names = {fn.__name__ for fn in base_tools_module.ALL_TOOLS}
-
-    monkeypatch.setenv("AYON_MCP_ENABLE_OPENAPI_TOOLS", "true")
 
     try:
         import ayon_mcp.tools.openapi_generated  # noqa: F401
     except ImportError:
-        pytest.skip("openapi_generated tools are not present; run the generator before enabling")
+        pytest.skip(
+            "openapi_generated tools are not present; run the generator before "
+            "reloading tools"
+        )
+
+    tools_module = _reload_tools_module()
+    names = {fn.__name__ for fn in tools_module.ALL_TOOLS}
+
+    assert "get_access_group_schema" in names
 
 
-    enabled_tools_module = _reload_tools_module()
-    enabled_names = {fn.__name__ for fn in enabled_tools_module.ALL_TOOLS}
+@pytest.mark.usefixtures("restore_tools_module")
+def test_openapi_tools_not_registered_when_disabled(
+    monkeypatch,
+    restore_tools_module,
+):
+    """Generated OpenAPI tools are not registered when env flag is falsey."""
+    monkeypatch.delenv("AYON_MCP_ENABLE_OPENAPI_TOOLS", raising=False)
+    base_tools_module = _reload_tools_module()
+    base_names = {fn.__name__ for fn in base_tools_module.ALL_TOOLS}
 
-    assert "get_access_group_schema" in enabled_names
-    assert len(enabled_names) > len(base_names)
+    monkeypatch.setenv("AYON_MCP_ENABLE_OPENAPI_TOOLS", "false")
+
+    try:
+        import ayon_mcp.tools.openapi_generated  # noqa: F401
+    except ImportError:
+        pytest.skip(
+            "openapi_generated tools are not present; run the generator before "
+            "reloading tools"
+        )
+
+
+    disabled_tools_module = _reload_tools_module()
+    disabled_names = {fn.__name__ for fn in disabled_tools_module.ALL_TOOLS}
+
+    assert "get_access_group_schema" not in disabled_names
+    assert len(disabled_names) < len(base_names)

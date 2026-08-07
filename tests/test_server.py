@@ -1,6 +1,7 @@
 """Tests for the AYON MCP server."""
 from __future__ import annotations
 
+import os
 import pytest
 from contextlib import AsyncExitStack
 from mcp import ClientSession, StdioServerParameters
@@ -128,13 +129,17 @@ class TestCreateMcpServer:
         from fastmcp import FastMCP
         from ayon_mcp.server import create_mcp_server
 
-        mcp = create_mcp_server("http://localhost:5000")
+        mcp = create_mcp_server(
+            "http://localhost:5000", 
+            os.getenv("AYON_API_KEY", ""))
         assert isinstance(mcp, FastMCP)
 
     def test_server_has_correct_name(self):
         from ayon_mcp.server import create_mcp_server
 
-        mcp = create_mcp_server("http://localhost:5000")
+        mcp = create_mcp_server(
+            "http://localhost:5000",
+            os.getenv("AYON_API_KEY", ""))
         assert mcp.name == "AYON MCP Server"
 
     def test_all_tools_are_registered(self):
@@ -142,7 +147,7 @@ class TestCreateMcpServer:
         from ayon_mcp.server import create_mcp_server
         from ayon_mcp.tools import ALL_TOOLS
 
-        mcp = create_mcp_server("http://localhost:5000")
+        mcp = create_mcp_server("http://localhost:5000", os.getenv("AYON_API_KEY", ""))
         registered = {t.name for t in asyncio.run(mcp.list_tools())}
         expected = {fn.__name__ for fn in ALL_TOOLS}
         assert expected == registered
@@ -528,6 +533,7 @@ class TestListBundles:
 
 
 @pytest.mark.asyncio
+@pytest.mark.server
 async def test_mcp_server_tools_list():
     """Connect to a local MCP server via stdio and verify the exposed tool list."""
     import os

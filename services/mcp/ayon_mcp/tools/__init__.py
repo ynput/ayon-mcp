@@ -78,8 +78,8 @@ ALL_TOOLS: Sequence[Callable] = [  # ruff: ignore[non-empty-init-module]
 
 def openapi_tools_enabled() -> bool:  # ruff: ignore[non-empty-init-module]
     """Return True if generated OpenAPI tools should be registered."""
-    value = (os.getenv("AYON_MCP_ENABLE_OPENAPI_TOOLS", "") or "").strip()
-    return value.lower() in {"1", "true", "yes", "on"}
+    value = (os.getenv("AYON_MCP_ENABLE_OPENAPI_TOOLS", "true") or "").strip()
+    return value.lower() not in {"0", "false", "no", "off"}
 
 
 if openapi_tools_enabled():  # ruff: ignore[non-empty-init-module]

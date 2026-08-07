@@ -133,7 +133,7 @@ The port can be changed using environment variable `AYON_MCP_PORT`
 Write tools modify production data through the standard AYON operations
 endpoint, so server-side validation, permissions and events all apply.
 
-### Generated OpenAPI Tools (Optional)
+### Generated OpenAPI Tools
 
 This repository can expose an additional auto-generated tool layer from
 `services/mcp/ayon_openapi.json`.
@@ -145,15 +145,22 @@ This repository can expose an additional auto-generated tool layer from
 - Transport client used by generated tools:
   `RestApiClient` via `services/mcp/ayon_mcp/rest_client.py`
 
-By default, generated OpenAPI tools are **disabled**.
+Generated OpenAPI tools are **enabled by default**.
 
-Enable them by setting:
+On server startup, AYON MCP now:
 
-- `AYON_MCP_ENABLE_OPENAPI_TOOLS=true`
+1. Fetches `<AYON_SERVER_URL>/openapi.json`
+2. Computes a deterministic hash of the fetched spec
+3. Compares it with the local `services/mcp/ayon_openapi.json` hash
+4. Regenerates `openapi_generated` only when the spec changed (or generated files are missing)
 
-Accepted truthy values are: `1`, `true`, `yes`, `on` (case-insensitive).
+To disable generated OpenAPI tools, set:
 
-Regenerate after updating the OpenAPI spec:
+- `AYON_MCP_ENABLE_OPENAPI_TOOLS=false`
+
+Accepted falsey values are: `0`, `false`, `no`, `off` (case-insensitive).
+
+You can still manually regenerate from the local spec file when needed:
 
 ```sh
 uv run python ./services/mcp/scripts/generate_openapi_tools.py

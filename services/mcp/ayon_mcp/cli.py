@@ -69,7 +69,7 @@ def main(
     server_url = f"{host}:{port}"
     if not api_key:
         api_key = os.getenv(KEY_ENV_VAR)
-        if not api_key and not remote:
+        if not api_key:
             msg = (
                 "AYON API key is required in local mode. "
                 "Set the AYON_API_KEY environment variable "
@@ -77,11 +77,11 @@ def main(
             raise click.UsageError(msg)
 
     if remote:
-        run_remote_server(server_url)
+        run_remote_server(server_url, api_key)
         return
 
     # run in local mode
-    run_local_server(server_url, api_key)  # ty:ignore[invalid-argument-type]
+    run_local_server(server_url, api_key)
 
 
 if __name__ == "__main__":

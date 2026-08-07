@@ -142,15 +142,34 @@ class TestCreateMcpServer:
             os.getenv("AYON_API_KEY", ""))
         assert mcp.name == "AYON MCP Server"
 
-    def test_all_tools_are_registered(self):
+    def test_discovery_tools_are_registered(self):
+        import asyncio
+        from ayon_mcp.server import create_mcp_server
+
+        mcp = create_mcp_server("http://localhost:5000", os.getenv("AYON_API_KEY", ""))
+        registered = {t.name for t in asyncio.run(mcp.list_tools())}
+        expected = {
+            "list_ayon_tools",
+            "search_ayon_tools",
+            "get_ayon_tool_schema",
+            "get_ayon_tool_schemas",
+            "call_ayon_tool",
+        }
+        assert expected == registered
+
+    def test_direct_exposure_mode_preserves_legacy_tools(self, monkeypatch):
         import asyncio
         from ayon_mcp.server import create_mcp_server
         from ayon_mcp.tools import ALL_TOOLS
 
+        monkeypatch.setenv("AYON_MCP_TOOL_EXPOSURE", "direct")
         mcp = create_mcp_server("http://localhost:5000", os.getenv("AYON_API_KEY", ""))
-        registered = {t.name for t in asyncio.run(mcp.list_tools())}
-        expected = {fn.__name__ for fn in ALL_TOOLS}
-        assert expected == registered
+
+        registered = {tool.name for tool in asyncio.run(mcp.list_tools())}
+
+        assert registered == {
+            getattr(function, "__name__", "") for function in ALL_TOOLS
+        }
 
 
 # ---------------------------------------------------------------------------
@@ -539,7 +558,6 @@ async def test_mcp_server_tools_list():
     import os
     import pathlib
     import sys
-    from ayon_mcp.tools import ALL_TOOLS
 
     scripts_dir = pathlib.Path(__file__).parent.parent / "scripts"
     if sys.platform == "win32":
@@ -559,7 +577,13 @@ async def test_mcp_server_tools_list():
         env=env,
     )
 
-    expected_tools = sorted(fn.__name__ for fn in ALL_TOOLS)
+    expected_tools = sorted([
+        "call_ayon_tool",
+        "get_ayon_tool_schema",
+        "get_ayon_tool_schemas",
+        "list_ayon_tools",
+        "search_ayon_tools",
+    ])
 
     async with AsyncExitStack() as stack:
         transport = await stack.enter_async_context(stdio_client(server_params))

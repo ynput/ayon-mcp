@@ -13,7 +13,11 @@ data — use them only when explicitly asked to change something.
 
 
 OPENAPI_INSTRUCTIONS = """\
-Tools are exposed from AYON OpenAPI endpoints.
+AYON tools are discovered on demand to keep the initial tool surface compact.
+
+Use `search_ayon_tools` to find an operation, then `get_ayon_tool_schema`
+before calling `call_ayon_tool`. Write operations require
+`confirm_mutation=true` only after the user explicitly authorized the change.
 
 Use read endpoints first to gather context, then call write endpoints only
 when explicitly asked to change data.

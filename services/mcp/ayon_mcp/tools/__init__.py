@@ -82,6 +82,12 @@ def openapi_tools_enabled() -> bool:  # ruff: ignore[non-empty-init-module]
     return value.lower() not in {"0", "false", "no", "off"}
 
 
+def tool_exposure_mode() -> str:  # ruff: ignore[non-empty-init-module]
+    """Return the MCP tool exposure mode, defaulting to discovery."""
+    value = (os.getenv("AYON_MCP_TOOL_EXPOSURE", "discovery") or "").strip()
+    return "direct" if value.lower() == "direct" else "discovery"
+
+
 if openapi_tools_enabled():  # ruff: ignore[non-empty-init-module]
     try:
         from .openapi_generated import ALL_OPENAPI_TOOLS
@@ -112,5 +118,6 @@ __all__ = [
     "list_versions",
     "query_graphql",
     "set_addon_settings",
+    "tool_exposure_mode",
     "update_entity",
 ]

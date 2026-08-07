@@ -122,6 +122,16 @@ The port can be changed using environment variable `AYON_MCP_PORT`
 
 ## Tools
 
+By default, the server exposes five discovery tools instead of every AYON
+operation schema. Use `search_ayon_tools` to find a capability,
+`get_ayon_tool_schema` to inspect its arguments, and `call_ayon_tool` to run
+it. This keeps the initial MCP tool schema payload small even when OpenAPI
+generation produces many endpoints. State-changing tools require
+`confirm_mutation=true` only after the user explicitly authorizes the change.
+
+Set `AYON_MCP_TOOL_EXPOSURE=direct` to restore the legacy direct-tool surface
+for compatibility.
+
 | Area | Tools |
 | --- | --- |
 | Projects | `list_projects`, `get_project`, `get_server_info` |
@@ -145,7 +155,9 @@ This repository can expose an additional auto-generated tool layer from
 - Transport client used by generated tools:
   `RestApiClient` via `services/mcp/ayon_mcp/rest_client.py`
 
-Generated OpenAPI tools are **enabled by default**.
+Generated OpenAPI tools are **enabled by default** and are available through
+the discovery tools. They are registered directly only when
+`AYON_MCP_TOOL_EXPOSURE=direct` is set.
 
 On server startup, AYON MCP now:
 

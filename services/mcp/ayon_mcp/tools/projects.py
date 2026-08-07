@@ -148,6 +148,11 @@ def get_project_anatomy(project_name: str) -> ProjectAnatomy:
     definitions use `list_attributes`; for everything else about the
     project use `get_project`.
 
+    Note this is the write-relevant subset of AYON's project anatomy;
+    the full anatomy (also roots, path templates, entity naming) is
+    served by the REST endpoint
+    `/api/projects/{project_name}/anatomy`.
+
     Args:
         project_name: Name of the project to inspect.
 

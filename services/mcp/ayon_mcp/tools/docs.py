@@ -24,11 +24,16 @@ AYON organizes production data per **project**:
   holding the actual file list.
 
 So the chain is: folder → product → version → representation, and
-folder → task for work management. Entity ids are 32-char hex strings.
+folder → task for work management. **Workfiles** (DCC scene files per
+task) are tracked too; reach them via `query_graphql` or the REST
+gateway. Entity ids are 32-char hex strings.
+
 Statuses, tags, folder/task types are **project-specific** — read them
 with `get_project_anatomy` before writing. Attribute definitions
-(names, types, enums) are server-wide — read them with
-`list_attributes`.
+(names, types, enums) are studio-wide — read them with
+`list_attributes`. Attributes with `inherit` enabled take their value
+from the parent entity when not set explicitly, so a folder's fps can
+come from the project.
 """
 
 _QUERYING = """\
@@ -82,10 +87,16 @@ _SETTINGS = """\
 
 - **Addon** — a versioned extension installed on the server
   (`list_addons`).
-- **Bundle** — pins one version of each addon; the `production` and
-  `staging` variants resolve through bundles (`list_bundles`).
-- **Settings** live per addon version, on two levels: **studio**
-  (defaults for everything) and **project** (overrides per project).
+- **Bundle** — pins one version of each addon, plus the launcher
+  version and dependency packages (`list_bundles`). Exactly one
+  bundle is marked production and one staging at a time.
+- **Variant** — settings are stored per addon version and variant,
+  not per bundle: `production` and `staging` variants resolve through
+  the bundle with that status; a dev bundle gets its own variant
+  named after the bundle.
+- **Levels** — studio settings are the defaults for everything;
+  projects add overrides on top. (Site settings — per-machine — exist
+  as a further level but are not covered by these tools.)
 
 Reading: `get_addon_settings` returns resolved values (studio +
 project overrides). Schema: `get_addon_settings_schema` returns the
@@ -95,6 +106,11 @@ drill into nested objects with `path=[...]`.
 Writing: `set_addon_settings` REPLACES all overrides at the chosen
 level. To change one value: read current settings, keep what should
 stay overridden, modify, then submit the whole object.
+
+New projects are initialized from an **anatomy preset** (studio-level
+template with roots, path templates, types and statuses); the preset
+is copied at creation time, not linked. Presets are reachable via the
+REST gateway under `/api/anatomy/presets`.
 """
 
 _EVENTS = """\
@@ -111,6 +127,10 @@ events too.
 - `dispatch_event` — emit a custom event; namespace custom topics
   (e.g. `mytool.sync.finished`). `finished=False` creates a pending
   event another service may pick up.
+
+Services process work by **enrollment**: they poll for pending events
+of a source topic and create a dependent target event (`dependsOn`
+links them), moving it pending → in_progress → finished/failed.
 
 Useful for debugging: after a failed publish or sync, list recent
 events with `statuses=["failed"]` or topic `log.error`.

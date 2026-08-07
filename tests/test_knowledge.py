@@ -71,7 +71,7 @@ ATTRIBUTES_PAYLOAD = {
             "name": "fps",
             "scope": ["project", "folder", "task", "version"],
             "builtin": True,
-            "data": {"type": "float", "title": "FPS"},
+            "data": {"type": "float", "title": "FPS", "inherit": True},
         },
         {
             "name": "resolutionWidth",
@@ -111,8 +111,10 @@ class TestListAttributes:
         assert fps.name == "fps"
         assert fps.type == "float"
         assert fps.builtin is True
+        assert fps.inherit is True
         priority = result.items[2]
         assert priority.enum[0]["value"] == "low"
+        assert priority.inherit is None
 
     def test_scope_filter(self, mock_api):
         from ayon_mcp.tools.schema import list_attributes

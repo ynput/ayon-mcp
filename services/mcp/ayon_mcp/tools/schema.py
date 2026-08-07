@@ -36,6 +36,13 @@ class AttributeInfo(_CamelModel):
     type: str = Field("", description="Value type, e.g. integer, string")
     title: str | None = None
     description: str | None = None
+    inherit: bool | None = Field(
+        None,
+        description=(
+            "Whether the value is inherited from the parent entity "
+            "when not set explicitly"
+        ),
+    )
     enum: list[dict[str, Any]] | None = Field(
         None, description="Allowed values when the attribute is an enum")
 
@@ -51,15 +58,17 @@ def list_attributes(scope: str | None = None) -> AttributeList:
     """List attribute definitions configured on the AYON server.
 
     Attributes are the typed fields behind every entity's `attrib` dict
-    (fps, resolution, frameStart, ...). Check them before writing
-    `attrib` values with `create_entity` / `update_entity`: the `name`
-    is the key to use, `type` the expected value type, and `enum` the
-    allowed values when present.
+    (fps, resolution, frameStart, ...). They are defined studio-wide
+    (not per project). Check them before writing `attrib` values with
+    `create_entity` / `update_entity`: the `name` is the key to use,
+    `type` the expected value type, and `enum` the allowed values when
+    present. Attributes with `inherit` take their value from the
+    parent entity when not set explicitly.
 
     Args:
-        scope: Only attributes applying to this entity type, e.g.
-            "folder", "task", "product", "version", "representation",
-            "project", "user".
+        scope: Only attributes applying to this entity type, one of
+            "project", "folder", "task", "product", "version",
+            "representation", "workfile", "user".
 
     Returns:
         AttributeList: Attribute definitions with name, scope, type,
@@ -80,6 +89,7 @@ def list_attributes(scope: str | None = None) -> AttributeList:
             type=attr_data.get("type", ""),
             title=attr_data.get("title"),
             description=attr_data.get("description"),
+            inherit=attr_data.get("inherit"),
             enum=attr_data.get("enum"),
         ))
     return AttributeList(count=len(items), items=items)

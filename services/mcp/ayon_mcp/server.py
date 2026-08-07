@@ -157,6 +157,7 @@ def run_remote(base_url: str) -> FastMCP:
         transport="streamable-http",
         host="0.0.0.0",  # ruff:ignore[hardcoded-bind-all-interfaces]
         port=int(os.getenv("AYON_MCP_PORT", "8088")),
+        show_banner=False
     )
     return mcp
 
@@ -176,7 +177,7 @@ def run_local(base_url: str, api_key: str) -> FastMCP:
     mcp.add_middleware(
         StaticApiKeyMiddleware(base_url, api_key or os.getenv("AYON_API_KEY", ""))
     )
-    mcp.run()
+    mcp.run(show_banner=False)
     return mcp
 
 

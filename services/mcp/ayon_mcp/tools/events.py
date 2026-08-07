@@ -53,6 +53,7 @@ def list_events(  # ruff: ignore[too-many-arguments, too-many-positional-argumen
     newer_than: str | None = None,
     older_than: str | None = None,
     limit: int = 50,
+    offset: int = 0,
 ) -> dict[str, Any]:
     """List server events, newest first. Useful for pipeline debugging.
 
@@ -66,9 +67,13 @@ def list_events(  # ruff: ignore[too-many-arguments, too-many-positional-argumen
         newer_than: ISO 8601 timestamp, e.g. "2026-07-13T00:00:00Z".
         older_than: ISO 8601 timestamp.
         limit: Maximum number of events to return (default 50, max 500).
+        offset: Items to skip for paging; use the `next_offset` value
+            returned by the previous call.
 
     Returns:
         compact event records; use `get_event` for full payload.
+        When truncated, call again with `offset=next_offset` for the
+        next page.
     """
     events = api().get_events(
         topics=topics,
@@ -79,7 +84,7 @@ def list_events(  # ruff: ignore[too-many-arguments, too-many-positional-argumen
         older_than=older_than,
         fields=EVENT_FIELDS,
     )
-    return collect(events, limit)
+    return collect(events, limit, offset)
 
 
 def get_event(event_id: str) -> EventItem:

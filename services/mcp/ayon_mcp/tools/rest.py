@@ -19,8 +19,10 @@ from ayon_mcp.openapi_spec import (
     resolve_refs,
 )
 from ayon_mcp.rest_client import get_global_rest_client
+from ayon_mcp.utils import read_only_enabled
 
 _ALLOWED_METHODS = {"GET", "POST", "PUT", "PATCH", "DELETE", "HEAD"}
+_READ_METHODS = {"GET", "HEAD"}
 _MAX_ERROR_BODY_CHARS = 2000
 
 
@@ -230,6 +232,13 @@ async def call_rest_endpoint(
         msg = (
             f"Unsupported HTTP method {method!r}. "
             f"Supported methods: {', '.join(sorted(_ALLOWED_METHODS))}."
+        )
+        raise RuntimeError(msg)
+
+    if read_only_enabled() and normalized_method not in _READ_METHODS:
+        msg = (
+            f"This server runs in read-only mode: {normalized_method} "
+            "requests are not allowed. Only GET and HEAD are permitted."
         )
         raise RuntimeError(msg)
 

@@ -19,9 +19,19 @@ Two environment variables (or the matching CLI flags):
 | --- | --- |
 | `AYON_SERVER_URL` | e.g. `https://ayon.mystudio.com` or `http://localhost:5001` |
 | `AYON_API_KEY` | API key of the user the assistant acts as |
+| `AYON_MCP_READ_ONLY` | Set to `true` to expose only read tools (optional) |
 
 The assistant inherits the permissions of that user — use a restricted
 user if you only want read access.
+
+### Read-only mode
+
+With `AYON_MCP_READ_ONLY=true` (accepted truthy values: `1`, `true`,
+`yes`, `on`), write tools are not registered and the REST gateway
+(`call_rest_endpoint`) accepts only GET and HEAD requests. When running
+as an AYON service, the same toggle is available in the addon settings
+(Studio Settings → AYON MCP server → Read-only mode); the environment
+variable takes precedence when both are set.
 
 ## Usage
 
@@ -133,31 +143,15 @@ The port can be changed using environment variable `AYON_MCP_PORT`
 Write tools modify production data through the standard AYON operations
 endpoint, so server-side validation, permissions and events all apply.
 
-### Generated OpenAPI Tools (Optional)
+List tools are paginated: responses carry `count`, `truncated` and
+`next_offset` fields; pass `next_offset` back as `offset` to fetch the
+next page.
 
-This repository can expose an additional auto-generated tool layer from
-`services/mcp/ayon_openapi.json`.
-
-- Generated code location (ignored by Git):
-  `services/mcp/ayon_mcp/tools/openapi_generated/`
-- Generator script:
-  `services/mcp/scripts/generate_openapi_tools.py`
-- Transport client used by generated tools:
-  `RestApiClient` via `services/mcp/ayon_mcp/rest_client.py`
-
-By default, generated OpenAPI tools are **disabled**.
-
-Enable them by setting:
-
-- `AYON_MCP_ENABLE_OPENAPI_TOOLS=true`
-
-Accepted truthy values are: `1`, `true`, `yes`, `on` (case-insensitive).
-
-Regenerate after updating the OpenAPI spec:
-
-```sh
-uv run python ./services/mcp/scripts/generate_openapi_tools.py
-```
+Anything not covered by a dedicated tool is reachable through the REST
+gateway (`list_rest_endpoints`, `get_rest_endpoint`,
+`call_rest_endpoint`), which discovers endpoints from the server's
+OpenAPI spec at runtime (`services/mcp/ayon_openapi.json` is the bundled
+fallback used when the server cannot be reached).
 
 ## Development and tests
 

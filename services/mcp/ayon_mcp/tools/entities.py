@@ -139,6 +139,13 @@ class EntityList(_CamelModel, Generic[_T]):
 
     count: int
     truncated: bool
+    next_offset: int | None = Field(
+        None,
+        description=(
+            "Pass this as `offset` to fetch the next page "
+            "(present only when truncated)."
+        ),
+    )
     items: list[_T]
 
 
@@ -181,6 +188,7 @@ def list_folders(  # ruff: ignore[too-many-arguments]
     has_tasks: bool | None = None,
     include_attrib: bool = False,
     limit: int = 50,
+    offset: int = 0,
 ) -> EntityList[Folder]:
     """List/filter folders (assets, shots, sequences...) of a project.
 
@@ -195,11 +203,15 @@ def list_folders(  # ruff: ignore[too-many-arguments]
         include_attrib: Include attributes (fps, resolution, frame
             ranges...). Off by default to keep responses small.
         limit: Maximum number of folders to return (default 50, max 500).
+        offset: Items to skip for paging; use the `next_offset` value
+            returned by the previous call.
 
     Returns:
-        An EntityList[Folder] with count, truncated and items fields.
-        Each Folder has: id, name, label, path, folderType, parentId,
-        status, tags, active. Includes attrib if `include_attrib` is True.
+        An EntityList[Folder] with count, truncated, next_offset and
+        items fields. Each Folder has: id, name, label, path, folderType,
+        parentId, status, tags, active. Includes attrib if
+        `include_attrib` is True. When truncated, call again with
+        `offset=next_offset` for the next page.
 
     """
     folders = api().get_folders(
@@ -211,7 +223,7 @@ def list_folders(  # ruff: ignore[too-many-arguments]
         has_tasks=has_tasks,
         fields=entity_fields(FOLDER_FIELDS, include_attrib=include_attrib),
     )
-    return EntityList[Folder].model_validate(collect(folders, limit))
+    return EntityList[Folder].model_validate(collect(folders, limit, offset))
 
 
 def list_tasks(  # ruff: ignore[too-many-arguments, too-many-positional-arguments]
@@ -221,6 +233,7 @@ def list_tasks(  # ruff: ignore[too-many-arguments, too-many-positional-argument
     assignees: list[str] | None = None,
     statuses: list[str] | None = None,
     limit: int = 50,
+    offset: int = 0,
     *,
     include_attrib: bool = False,
 ) -> EntityList[Task]:
@@ -234,11 +247,15 @@ def list_tasks(  # ruff: ignore[too-many-arguments, too-many-positional-argument
         statuses: Status name filter, e.g. ["Ready to start"].
         include_attrib: Include task attributes (frame range etc.).
         limit: Maximum number of tasks to return (default 50, max 500).
+        offset: Items to skip for paging; use the `next_offset` value
+            returned by the previous call.
 
     Returns:
-        An EntityList[Task] with count, truncated and items fields.
-        Each Task has: id, name, label, taskType, folderId, assignees,
-        status, tags, active. Includes attrib if `include_attrib` is True.
+        An EntityList[Task] with count, truncated, next_offset and items
+        fields. Each Task has: id, name, label, taskType, folderId,
+        assignees, status, tags, active. Includes attrib if
+        `include_attrib` is True. When truncated, call again with
+        `offset=next_offset` for the next page.
 
     """
     tasks = api().get_tasks(
@@ -249,15 +266,16 @@ def list_tasks(  # ruff: ignore[too-many-arguments, too-many-positional-argument
         statuses=statuses,
         fields=entity_fields(TASK_FIELDS, include_attrib=include_attrib),
     )
-    return EntityList[Task].model_validate(collect(tasks, limit))
+    return EntityList[Task].model_validate(collect(tasks, limit, offset))
 
 
-def list_products(
+def list_products(  # ruff: ignore[too-many-arguments, too-many-positional-arguments]
     project_name: str,
     folder_id: str | None = None,
     product_types: list[str] | None = None,
     name_regex: str | None = None,
     limit: int = 50,
+    offset: int = 0,
 ) -> EntityList[Product]:
     """List/filter products (published outputs grouped by type) of a project.
 
@@ -267,11 +285,14 @@ def list_products(
         product_types: Product type filter, e.g. ["model", "render", "rig"].
         name_regex: Regex matched against product names.
         limit: Maximum number of products to return (default 50, max 500).
+        offset: Items to skip for paging; use the `next_offset` value
+            returned by the previous call.
 
     Returns:
-        An EntityList[Product] with count, truncated and items fields.
-        Each Product has: id, name, product_type, folder_id,
-        status, tags, active.
+        An EntityList[Product] with count, truncated, next_offset and
+        items fields. Each Product has: id, name, product_type,
+        folder_id, status, tags, active. When truncated, call again
+        with `offset=next_offset` for the next page.
 
     """
     products = api().get_products(
@@ -281,7 +302,7 @@ def list_products(
         product_name_regex=name_regex,
         fields=PRODUCT_FIELDS,
     )
-    return EntityList[Product].model_validate(collect(products, limit))
+    return EntityList[Product].model_validate(collect(products, limit, offset))
 
 
 def list_versions(  # ruff: ignore[too-many-arguments]
@@ -289,6 +310,7 @@ def list_versions(  # ruff: ignore[too-many-arguments]
     product_id: str | None = None,
     statuses: list[str] | None = None,
     limit: int = 50,
+    offset: int = 0,
     *,
     latest_only: bool = False,
     include_attrib: bool = False,
@@ -302,11 +324,15 @@ def list_versions(  # ruff: ignore[too-many-arguments]
         statuses: Status name filter, e.g. ["Approved"].
         include_attrib: Include version attributes.
         limit: Maximum number of versions to return (default 50, max 500).
+        offset: Items to skip for paging; use the `next_offset` value
+            returned by the previous call.
 
     Returns:
-        An EntityList[Version] with count, truncated and items fields.
-        Each Version has: id, version, productId, taskId, author, status,
-        tags, active, createdAt. Includes attrib if `include_attrib` is True.
+        An EntityList[Version] with count, truncated, next_offset and
+        items fields. Each Version has: id, version, productId, taskId,
+        author, status, tags, active, createdAt. Includes attrib if
+        `include_attrib` is True. When truncated, call again with
+        `offset=next_offset` for the next page.
 
     """
     versions = api().get_versions(
@@ -316,14 +342,15 @@ def list_versions(  # ruff: ignore[too-many-arguments]
         statuses=statuses,
         fields=entity_fields(VERSION_FIELDS, include_attrib=include_attrib),
     )
-    return EntityList[Version].model_validate(collect(versions, limit))
+    return EntityList[Version].model_validate(collect(versions, limit, offset))
 
 
-def list_representations(
+def list_representations(  # ruff: ignore[too-many-arguments]
     project_name: str,
     version_id: str | None = None,
     names: list[str] | None = None,
     limit: int = 50,
+    offset: int = 0,
     *,
     include_files: bool = False,
 ) -> EntityList[Representation]:
@@ -336,11 +363,15 @@ def list_representations(
         include_files: Include the file list (paths, sizes) of each
             representation.
         limit: Maximum number of representations (default 50, max 500).
+        offset: Items to skip for paging; use the `next_offset` value
+            returned by the previous call.
 
     Returns:
-        An EntityList[Representation] with count, truncated and items fields.
-        Each Representation has: id, name, versionId, status, tags, active.
-        Includes files if `include_files` is True.
+        An EntityList[Representation] with count, truncated, next_offset
+        and items fields. Each Representation has: id, name, versionId,
+        status, tags, active. Includes files if `include_files` is True.
+        When truncated, call again with `offset=next_offset` for the
+        next page.
 
     """
     fields = set(REPRESENTATION_FIELDS)
@@ -353,7 +384,7 @@ def list_representations(
         fields=fields,
     )
     return EntityList[Representation].model_validate(
-        collect(representations, limit)
+        collect(representations, limit, offset)
     )
 
 

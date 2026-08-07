@@ -2,24 +2,28 @@
 
 from __future__ import annotations
 
+import logging
 import os
 from typing import TYPE_CHECKING, AsyncIterator
 
+import httpx
 from fastmcp import FastMCP
 from fastmcp.server.dependencies import get_http_headers
 from fastmcp.server.lifespan import lifespan
 from fastmcp.server.middleware import CallNext, Middleware, MiddlewareContext
 
-# from fastmcp.server.providers.openapi import MCPType, RouteMap
 from .client import get_ayon_api, set_global_ayon_client
-from .instructions import INSTRUCTIONS, OPENAPI_INSTRUCTIONS
+from .instructions import INSTRUCTIONS, READ_ONLY_NOTE
 from .rest_client import RestApiClient, set_global_rest_client
-from .tools import ALL_TOOLS, openapi_tools_enabled
+from .tools import ALL_TOOLS, TOOL_ANNOTATIONS
+from .utils import read_only_enabled, set_read_only
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterable
 
     import mcp.types as mcp_types
+
+logger = logging.getLogger(__name__)
 
 
 class RemoteApiKeyMiddleware(Middleware):
@@ -79,10 +83,34 @@ class StaticApiKeyMiddleware(Middleware):
         return await call_next(context)
 
 
-def register_tools(server: FastMCP, tools: Iterable[Callable]) -> None:
-    """Registers a sequence of callable tools with the FastMCP instance."""
+def register_tools(
+    server: FastMCP,
+    tools: Iterable[Callable],
+    *,
+    read_only: bool = False,
+) -> None:
+    """Register callable tools with annotations on the FastMCP instance.
+
+    Each tool is registered with its MCP annotations from
+    ``TOOL_ANNOTATIONS`` (readOnlyHint, destructiveHint...). In
+    read-only mode, tools that are not read-only are skipped — except
+    `call_rest_endpoint`, which restricts itself to GET/HEAD at runtime
+    and is therefore registered as read-only.
+
+    Args:
+        server: FastMCP instance to register the tools on.
+        tools: Callables to register as tools.
+        read_only: Skip write tools when True.
+
+    """
     for tool in tools:
-        server.tool()(tool)
+        annotations = dict(TOOL_ANNOTATIONS.get(tool.__name__, {}))
+        if read_only and not annotations.get("readOnlyHint"):
+            if tool.__name__ != "call_rest_endpoint":
+                continue
+            # The runtime guard limits the gateway to GET/HEAD.
+            annotations.update(readOnlyHint=True, destructiveHint=False)
+        server.tool(tool, annotations=annotations or None)
 
 
 def create_mcp_server(base_url: str) -> FastMCP:
@@ -119,16 +147,8 @@ def create_mcp_server(base_url: str) -> FastMCP:
             await client.close()
             set_global_rest_client(None)
 
-    # mcp = FastMCP.from_openapi(
-    #     openapi_spec=openapi_spec,
-    #     validate_output=False,
-    #     client=client,
-    #     name="AYON MCP Server",
-    #     instructions=INSTRUCTIONS,
-    #     route_maps=semantic_maps
-    # )
-
-    instructions = INSTRUCTIONS if not openapi_tools_enabled() else OPENAPI_INSTRUCTIONS
+    read_only = read_only_enabled()
+    instructions = INSTRUCTIONS + (READ_ONLY_NOTE if read_only else "")
 
     mcp = FastMCP(
         lifespan=server_lifespan,
@@ -136,9 +156,43 @@ def create_mcp_server(base_url: str) -> FastMCP:
         instructions=instructions
     )
 
-    register_tools(mcp, ALL_TOOLS)
+    register_tools(mcp, ALL_TOOLS, read_only=read_only)
 
     return mcp
+
+
+def _fetch_addon_read_only_setting(base_url: str) -> bool | None:
+    """Read the addon's `read_only` setting from the AYON server.
+
+    Remote mode runs as an AYON service; ash injects the service
+    credentials and addon identity into the environment. Returns None
+    when the setting cannot be determined (missing env, unreachable
+    server), leaving the environment variable in charge.
+
+    Args:
+        base_url: AYON server URL.
+
+    Returns:
+        The `read_only` setting value, or None when unavailable.
+
+    """
+    addon_name = os.getenv("AYON_ADDON_NAME", "mcp")
+    addon_version = os.getenv("AYON_ADDON_VERSION", "")
+    api_key = os.getenv("AYON_API_KEY", "")
+    if not addon_version or not api_key:
+        return None
+    try:
+        response = httpx.get(
+            f"{base_url}/api/addons/{addon_name}/{addon_version}/settings",
+            headers={"x-api-key": api_key},
+            timeout=10.0,
+        )
+        response.raise_for_status()
+        value = response.json().get("read_only")
+    except (httpx.HTTPError, ValueError) as exc:
+        logger.warning("Could not fetch addon settings: %s", exc)
+        return None
+    return value if isinstance(value, bool) else None
 
 
 def run_remote(base_url: str) -> FastMCP:
@@ -151,6 +205,10 @@ def run_remote(base_url: str) -> FastMCP:
         FastMCP instance configured with the AYON OpenAPI spec.
 
     """
+    # The env var wins; otherwise the addon settings toggle applies.
+    if "AYON_MCP_READ_ONLY" not in os.environ:
+        set_read_only(_fetch_addon_read_only_setting(base_url))
+
     mcp = create_mcp_server(base_url)
     mcp.add_middleware(RemoteApiKeyMiddleware(base_url))
     mcp.run(

@@ -14,20 +14,6 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "services" / "mcp"))
 dotenv.load_dotenv(dotenv.find_dotenv(), override=True)
 
 
-GENERATED_DIR = (
-    Path(__file__).parent.parent
-    / "services" / "mcp" / "ayon_mcp" / "tools" / "openapi_generated"
-)
-
-requires_generated_tools = pytest.mark.skipif(
-    not (GENERATED_DIR / "__init__.py").exists(),
-    reason=(
-        "Generated OpenAPI tools are missing; run "
-        "`uv run python ./services/mcp/scripts/generate_openapi_tools.py`"
-    ),
-)
-
-
 def pytest_configure(config: pytest.Config) -> None:
     config.addinivalue_line(
         "markers",

@@ -3,6 +3,9 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+from .docs import (
+    get_documentation,
+)
 from .entities import (
     get_entity,
     get_folder_hierarchy,
@@ -20,6 +23,7 @@ from .events import (
 )
 from .projects import (
     get_project,
+    get_project_anatomy,
     get_server_info,
     list_projects,
 )
@@ -27,6 +31,11 @@ from .rest import (
     call_rest_endpoint,
     get_rest_endpoint,
     list_rest_endpoints,
+)
+from .schema import (
+    get_addon_settings_schema,
+    get_graphql_schema,
+    list_attributes,
 )
 from .settings import (
     get_addon_settings,
@@ -63,8 +72,15 @@ ALL_TOOLS: Sequence[Callable] = [  # ruff: ignore[non-empty-init-module]
 
     # projects
     get_project,
+    get_project_anatomy,
     get_server_info,
     list_projects,
+
+    # knowledge / schema discovery
+    list_attributes,
+    get_graphql_schema,
+    get_addon_settings_schema,
+    get_documentation,
 
     # settings
     get_addon_settings,
@@ -122,8 +138,15 @@ TOOL_ANNOTATIONS: dict[str, dict[str, Any]] = {  # ruff: ignore[non-empty-init-m
 
     # projects (read)
     "get_project": _READ,
+    "get_project_anatomy": _READ,
     "get_server_info": _READ,
     "list_projects": _READ,
+
+    # knowledge / schema discovery (read)
+    "list_attributes": _READ,
+    "get_graphql_schema": _READ,
+    "get_addon_settings_schema": _READ,
+    "get_documentation": _READ,
 
     # settings
     "get_addon_settings": _READ,
@@ -153,13 +176,18 @@ __all__ = [
     "delete_entity",
     "dispatch_event",
     "get_addon_settings",
+    "get_addon_settings_schema",
+    "get_documentation",
     "get_entity",
     "get_event",
     "get_folder_hierarchy",
+    "get_graphql_schema",
     "get_project",
+    "get_project_anatomy",
     "get_rest_endpoint",
     "get_server_info",
     "list_addons",
+    "list_attributes",
     "list_bundles",
     "list_events",
     "list_folders",

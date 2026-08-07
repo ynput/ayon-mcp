@@ -14,6 +14,14 @@ List tools are paginated: when a response has `truncated: true`, call
 the tool again with `offset` set to the returned `next_offset` to fetch
 the next page.
 
+Knowledge tools tell you what is valid before you act: `get_documentation`
+explains AYON concepts (call it with no arguments for the topic list),
+`get_project_anatomy` returns a project's valid folder/task types,
+statuses and tags, `list_attributes` the typed attribute definitions,
+`get_graphql_schema` the GraphQL schema for `query_graphql`, and
+`get_addon_settings_schema` the JSON schema behind addon settings.
+Consult them instead of guessing values.
+
 Anything not covered by a dedicated tool is reachable through the REST
 gateway: `list_rest_endpoints` to discover endpoints,
 `get_rest_endpoint` to inspect one endpoint's parameters and schemas,

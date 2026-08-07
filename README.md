@@ -134,11 +134,19 @@ The port can be changed using environment variable `AYON_MCP_PORT`
 
 | Area | Tools |
 | --- | --- |
-| Projects | `list_projects`, `get_project`, `get_server_info` |
+| Projects | `list_projects`, `get_project`, `get_project_anatomy`, `get_server_info` |
+| Knowledge | `get_documentation`, `list_attributes`, `get_graphql_schema`, `get_addon_settings_schema` |
 | Entities (read) | `get_folder_hierarchy`, `list_folders`, `list_tasks`, `list_products`, `list_versions`, `list_representations`, `get_entity`, `query_graphql` |
 | Entities (write) | `create_entity`, `update_entity`, `delete_entity`, `add_comment` |
 | Events | `list_events`, `get_event`, `dispatch_event` |
 | Settings | `list_addons`, `list_bundles`, `get_addon_settings`, `set_addon_settings` |
+
+The knowledge tools let the assistant learn what is valid before
+acting: project vocabulary (`get_project_anatomy`), attribute
+definitions (`list_attributes`), the GraphQL schema
+(`get_graphql_schema`) and addon settings schemas
+(`get_addon_settings_schema`). `get_documentation` serves concise
+concept docs (also exposed as MCP resources under `ayon://docs/...`).
 
 Write tools modify production data through the standard AYON operations
 endpoint, so server-side validation, permissions and events all apply.

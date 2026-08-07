@@ -16,6 +16,7 @@ from .client import get_ayon_api, set_global_ayon_client
 from .instructions import INSTRUCTIONS, READ_ONLY_NOTE
 from .rest_client import RestApiClient, set_global_rest_client
 from .tools import ALL_TOOLS, TOOL_ANNOTATIONS
+from .tools.docs import get_documentation
 from .utils import read_only_enabled, set_read_only
 
 if TYPE_CHECKING:
@@ -157,6 +158,18 @@ def create_mcp_server(base_url: str) -> FastMCP:
     )
 
     register_tools(mcp, ALL_TOOLS, read_only=read_only)
+
+    # The same documentation served by the get_documentation tool,
+    # exposed as MCP resources for clients that surface those.
+    mcp.resource(
+        "ayon://docs/{topic}",
+        name="ayon-documentation",
+        description=(
+            "AYON concept documentation; topics: concepts, querying, "
+            "writing, settings, events"
+        ),
+        mime_type="text/markdown",
+    )(get_documentation)
 
     return mcp
 

@@ -66,8 +66,9 @@ def create_entity(
     Optional keys: "status", "tags", "attrib" (dict of attribute
     values), "assignees" (tasks only), "label".
 
-    Valid folder/task types and statuses are project-specific — check
-    `get_project` first. Returns the new entity id.
+    Folder/task types, statuses and tags are defined per project (the
+    values above are just common examples) — check `get_project_anatomy`
+    first. Returns the new entity id.
 
     Args:
         project_name: Name of the project to create the entity in.

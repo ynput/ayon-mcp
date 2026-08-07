@@ -198,7 +198,8 @@ def list_folders(  # ruff: ignore[too-many-arguments]
             e.g. "^/shots/sq010/.*".
         folder_types: Folder type filter, e.g. ["Shot"].
         parent_id: Only direct children of this folder id.
-        statuses: Status name filter, e.g. ["In progress"].
+        statuses: Status name filter. Status names are project-defined
+            (see `get_project_anatomy`), e.g. ["In progress"].
         has_tasks: Only folders with (or without) tasks.
         include_attrib: Include attributes (fps, resolution, frame
             ranges...). Off by default to keep responses small.
@@ -244,7 +245,8 @@ def list_tasks(  # ruff: ignore[too-many-arguments, too-many-positional-argument
         folder_id: Only tasks under this folder id.
         task_types: Task type filter, e.g. ["Modeling", "Compositing"].
         assignees: Only tasks assigned to any of these AYON user names.
-        statuses: Status name filter, e.g. ["Ready to start"].
+        statuses: Status name filter. Status names are project-defined
+            (see `get_project_anatomy`), e.g. ["Ready to start"].
         include_attrib: Include task attributes (frame range etc.).
         limit: Maximum number of tasks to return (default 50, max 500).
         offset: Items to skip for paging; use the `next_offset` value
@@ -321,7 +323,8 @@ def list_versions(  # ruff: ignore[too-many-arguments]
         project_name: Project to query.
         product_id: Only versions of this product id.
         latest_only: Only the latest version per product.
-        statuses: Status name filter, e.g. ["Approved"].
+        statuses: Status name filter. Status names are project-defined
+            (see `get_project_anatomy`), e.g. ["Approved"].
         include_attrib: Include version attributes.
         limit: Maximum number of versions to return (default 50, max 500).
         offset: Items to skip for paging; use the `next_offset` value

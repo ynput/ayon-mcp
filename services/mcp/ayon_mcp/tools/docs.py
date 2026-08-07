@@ -28,8 +28,10 @@ folder → task for work management. **Workfiles** (DCC scene files per
 task) are tracked too; reach them via `query_graphql` or the REST
 gateway. Entity ids are 32-char hex strings.
 
-Statuses, tags, folder/task types are **project-specific** — read them
-with `get_project_anatomy` before writing. Attribute definitions
+Statuses, tags, folder/task types are **defined by each studio and
+project** — there is no fixed set, and any names in examples are just
+that. Read the actual values with `get_project_anatomy` before
+writing. Attribute definitions
 (names, types, enums) are studio-wide — read them with
 `list_attributes`. Attributes with `inherit` enabled take their value
 from the parent entity when not set explicitly, so a folder's fps can

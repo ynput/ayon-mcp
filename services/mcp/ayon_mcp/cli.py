@@ -56,15 +56,18 @@ def main(
         click.UsageError: If required arguments are missing or invalid.
 
     """
-    if ":" in host:
-        host, port_str = host.rsplit(":", 1)
-        try:
-            port = int(port_str)
-        except ValueError as e:
-            msg = (
-                f"Invalid port number in host URL: {port_str!r}. "
-                "Port must be an integer.")
-            raise click.UsageError(msg) from e
+    # Only treat the last colon as a port separator when it is followed
+    # by digits — a scheme URL without a port ("http://localhost") also
+    # contains a colon.
+    head, sep, tail = host.rpartition(":")
+    if sep and tail.isdigit():
+        host = head
+        port = int(tail)
+    elif sep and "/" not in tail:
+        msg = (
+            f"Invalid port number in host URL: {tail!r}. "
+            "Port must be an integer.")
+        raise click.UsageError(msg)
 
     server_url = f"{host}:{port}"
     if not api_key:

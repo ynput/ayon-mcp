@@ -56,19 +56,15 @@ def main(
         click.UsageError: If required arguments are missing or invalid.
 
     """
-    if not port:  # ruff:ignore[collapsible-if]
-        # If port is not provided, try to get it from the host
-        # to support both "http://localhost:5000"
-        # and "http://localhost" formats.
-        if ":" in host:
-            host, port_str = host.rsplit(":", 1)
-            try:
-                port = int(port_str)
-            except ValueError as e:
-                msg = (
-                    f"Invalid port number in host URL: {port_str!r}. "
-                    "Port must be an integer.")
-                raise click.UsageError(msg) from e
+    if ":" in host:
+        host, port_str = host.rsplit(":", 1)
+        try:
+            port = int(port_str)
+        except ValueError as e:
+            msg = (
+                f"Invalid port number in host URL: {port_str!r}. "
+                "Port must be an integer.")
+            raise click.UsageError(msg) from e
 
     server_url = f"{host}:{port}"
     if not api_key:
@@ -85,7 +81,7 @@ def main(
         return
 
     # run in local mode
-    run_local_server(server_url, api_key)
+    run_local_server(server_url, api_key)  # ty:ignore[invalid-argument-type]
 
 
 if __name__ == "__main__":

@@ -52,12 +52,12 @@ Add following:
   "servers": {
     "ayon-mcp": {
       "type": "stdio",
-      "command": "powershell",
-      "args": [
-        "path/to/ayon-mcp-repo/scripts/start_local.ps1",
-        "--api-key", "${ayon_api_key}",
-				"--host", "${ayon_server}$",
-				"--port", "${ayon_port}"
+				"command": "pwsh",
+				"args": [
+				"-NoLogo", "-NonInteractive", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command",
+        "/path/to/ayon-mcp/scripts/start_local.ps1",
+				"--api-key", "${api_key}",
+        "--host", "http://localhost:5000"
       ],
       "env": {
       }
@@ -95,10 +95,9 @@ On Linux and macOS, use `bash` with `scripts/start_local.sh` instead.
 claude mcp add ayon-mcp \
   -e AYON_SERVER_URL=http://localhost:5000 \
   -e AYON_API_KEY=your-api-key \
-  -- powershell "path/to/ayon-mcp-repo/scripts/start_local.ps1"
+  -- pwsh "path/to/ayon-mcp-repo/scripts/start_local.ps1"
 ```
 
-On Linux and macOS replace `start_local.ps1` with `start_local.sh`
 
 ### Remote (http)
 
@@ -106,9 +105,9 @@ On Linux and macOS replace `start_local.ps1` with `start_local.sh`
 claude mcp add --transport http ayon-mcp \
   -e AYON_SERVER_URL=http://localhost:5000 \
   -e AYON_API_KEY=your-api-key \
-  -- powershell "path/to/ayon-mcp-repo/scripts/start_local.ps1"
+  -- pwsh "path/to/ayon-mcp-repo/scripts/start_local.ps1"
 ```
-
+On Linux and macOS, use `bash` with `scripts/start_local.sh` instead.
 
 ### Claude Desktop
 
@@ -119,7 +118,6 @@ For Claude Desktop follow [this guide](https://support.claude.com/en/articles/10
 You can run docker container as a AYON service or locally.
 The MCP endpoint is then served at `http://<host>:8088/mcp`.
 The port can be changed using environment variable `AYON_MCP_PORT`
-
 
 
 ## Tools
@@ -172,3 +170,8 @@ Once set, the integration tests will run. There is also pytest mark *integration
 uv sync
 uv run pytest
 ```
+
+## Notes
+With local / stdio mode, the output can be cluttered by messages coming from your shell profile
+init - you might want to mitigate that to reduce amount of warnings from your agent console. For
+example how to do it with powershell, follow the example of adding MCP server to VSCode.

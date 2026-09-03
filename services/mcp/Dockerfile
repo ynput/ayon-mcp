@@ -29,7 +29,7 @@ ENV OTEL_EXPORTER_OTLP_PROTOCOL=grpc
 ENV OTEL_EXPORTER_OTLP_INSECURE=true
 # Traces go directly to Tempo's OTLP receiver, bypassing Vector (which can't round-trip OTLP trace framing)
 ENV OTEL_EXPORTER_OTLP_TRACES_ENDPOINT=$OTEL_EXPORTER_OTLP_TRACES_ENDPOINT
-
+ENV OTEL_SERVICE_NAME=ayon-mcp-service
 EXPOSE 8088
 
 CMD ["uv", "run", "opentelemetry-instrument", "--traces_exporter", "otlp", "--metrics_exporter", "otlp", "--logs_exporter", "otlp", "python", "-m", "ayon_mcp.app"]

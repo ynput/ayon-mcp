@@ -2469,7 +2469,7 @@
           },
           "createdAt": {
             "deprecated": false,
-            "example": "2026-08-07T15:05:39.587135",
+            "example": "2026-09-03T15:21:12.180202",
             "format": "date-time",
             "title": "Createdat",
             "type": "string"
@@ -4182,7 +4182,7 @@
           "entityId": {
             "deprecated": false,
             "description": "ID of the entity in the list",
-            "example": "73e24036927111f1a877be9211392bcb",
+            "example": "19369908a7ab11f1b4501e40c22760a4",
             "title": "Entity ID",
             "type": "string"
           },
@@ -4195,7 +4195,7 @@
           },
           "id": {
             "deprecated": false,
-            "example": "73e23fbe927111f1a877be9211392bcb",
+            "example": "193697a0a7ab11f1b4501e40c22760a4",
             "title": "Item ID",
             "type": "string"
           },
@@ -4261,7 +4261,7 @@
           "entityId": {
             "deprecated": false,
             "description": "ID of the entity in the list",
-            "example": "73e24036927111f1a877be9211392bcb",
+            "example": "19369908a7ab11f1b4501e40c22760a4",
             "title": "Entity ID",
             "type": "string"
           },
@@ -4310,13 +4310,13 @@
           "entityId": {
             "deprecated": false,
             "description": "ID of the entity in the list",
-            "example": "73e24036927111f1a877be9211392bcb",
+            "example": "19369908a7ab11f1b4501e40c22760a4",
             "title": "Entity ID",
             "type": "string"
           },
           "id": {
             "deprecated": false,
-            "example": "73e23fbe927111f1a877be9211392bcb",
+            "example": "193697a0a7ab11f1b4501e40c22760a4",
             "title": "Item ID",
             "type": "string"
           },
@@ -4437,7 +4437,7 @@
           },
           "id": {
             "deprecated": false,
-            "example": "73e23c80927111f1a877be9211392bcb",
+            "example": "19368be8a7ab11f1b4501e40c22760a4",
             "title": "ID",
             "type": "string"
           },
@@ -4520,13 +4520,13 @@
           "entityId": {
             "deprecated": false,
             "description": "ID of the entity in the list",
-            "example": "73e24036927111f1a877be9211392bcb",
+            "example": "19369908a7ab11f1b4501e40c22760a4",
             "title": "Entity ID",
             "type": "string"
           },
           "id": {
             "deprecated": false,
-            "example": "73e23fbe927111f1a877be9211392bcb",
+            "example": "193697a0a7ab11f1b4501e40c22760a4",
             "title": "Item ID",
             "type": "string"
           },
@@ -4723,7 +4723,7 @@
           },
           "id": {
             "deprecated": false,
-            "example": "73e23c80927111f1a877be9211392bcb",
+            "example": "19368be8a7ab11f1b4501e40c22760a4",
             "title": "ID",
             "type": "string"
           },
@@ -4784,6 +4784,12 @@
             "title": "Item count",
             "type": "integer"
           },
+          "entityListFolderId": {
+            "deprecated": false,
+            "description": "ID of the folder containing the list",
+            "title": "List folder ID",
+            "type": "string"
+          },
           "entityListType": {
             "deprecated": false,
             "description": "Type of the list",
@@ -4808,7 +4814,7 @@
           },
           "id": {
             "deprecated": false,
-            "example": "73e23c80927111f1a877be9211392bcb",
+            "example": "19368be8a7ab11f1b4501e40c22760a4",
             "title": "ID",
             "type": "string"
           },
@@ -4910,6 +4916,14 @@
             "title": "Enum group",
             "type": "string"
           },
+          "hidden": {
+            "default": false,
+            "deprecated": false,
+            "description": "Enum item is not visible in the dropdown",
+            "example": false,
+            "title": "Is hidden",
+            "type": "boolean"
+          },
           "icon": {
             "anyOf": [
               {
@@ -4961,6 +4975,57 @@
           "label"
         ],
         "title": "EnumItem",
+        "type": "object"
+      },
+      "EnumResolverInfo": {
+        "description": "Base API model.",
+        "properties": {
+          "acceptedParams": {
+            "additionalProperties": {
+              "enum": [
+                "string",
+                "integer",
+                "float",
+                "boolean",
+                "datetime",
+                "list_of_strings",
+                "list_of_integers",
+                "list_of_any",
+                "list_of_submodels",
+                "dict"
+              ],
+              "type": "string"
+            },
+            "deprecated": false,
+            "description": "Dictionary of accepted query parameters and their type names",
+            "example": {
+              "include_root": "bool",
+              "project_name": "string"
+            },
+            "title": "Accepted parameters",
+            "type": "object"
+          },
+          "name": {
+            "deprecated": false,
+            "example": "statuses",
+            "title": "Resolver name",
+            "type": "string"
+          },
+          "settingsForm": {
+            "deprecated": false,
+            "description": "Optional form fields for resolver settings",
+            "items": {
+              "$ref": "#/components/schemas/SimpleFormField"
+            },
+            "title": "Settings form",
+            "type": "array"
+          }
+        },
+        "required": [
+          "name",
+          "acceptedParams"
+        ],
+        "title": "EnumResolverInfo",
         "type": "object"
       },
       "EventModel": {
@@ -5175,6 +5240,10 @@
             "default": "unknown",
             "title": "Filename",
             "type": "string"
+          },
+          "mediaInfo": {
+            "title": "Mediainfo",
+            "type": "object"
           },
           "size": {
             "title": "Size",
@@ -6284,6 +6353,41 @@
         "title": "GuestUserModel",
         "type": "object"
       },
+      "GuestUserPatchModel": {
+        "description": "Base API model.",
+        "properties": {
+          "avatarUrl": {
+            "deprecated": false,
+            "example": "http://example.com/avatar.png",
+            "title": "Avatar URL",
+            "type": "string"
+          },
+          "email": {
+            "deprecated": false,
+            "example": "foo.bar@example.com",
+            "title": "New Email",
+            "type": "string"
+          },
+          "fullName": {
+            "deprecated": false,
+            "example": "Foo Bar",
+            "title": "Full name",
+            "type": "string"
+          },
+          "status": {
+            "deprecated": false,
+            "enum": [
+              "pending",
+              "active"
+            ],
+            "example": "pending",
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "title": "GuestUserPatchModel",
+        "type": "object"
+      },
       "GuestUsersListModel": {
         "description": "Base API model.",
         "properties": {
@@ -6697,7 +6801,7 @@
           },
           "lastSeen": {
             "deprecated": false,
-            "example": "2026-08-07T15:05:42.031385",
+            "example": "2026-09-03T15:21:20.088387",
             "format": "date-time",
             "title": "Last seen time",
             "type": "string"
@@ -6989,8 +7093,8 @@
             "type": "string"
           },
           "loginPageBrand": {
-            "deprecated": false,
-            "description": "URL of the brand logo for the login page",
+            "deprecated": true,
+            "description": "Replaced by `studio_logo`, kept for backward compatibility",
             "title": "Brand logo",
             "type": "string"
           },
@@ -7047,6 +7151,12 @@
             },
             "title": "SSO options",
             "type": "array"
+          },
+          "studioLogo": {
+            "deprecated": false,
+            "description": "URL of the brand logo for the login page",
+            "title": "Brand logo",
+            "type": "string"
           },
           "uptime": {
             "deprecated": false,
@@ -7768,12 +7878,12 @@
               {
                 "active": true,
                 "code": "ex",
-                "createdAt": "2026-08-07T15:05:41.517365",
+                "createdAt": "2026-09-03T15:21:18.385199",
                 "library": false,
                 "name": "Example project",
                 "pinned": false,
                 "skeleton": false,
-                "updatedAt": "2026-08-07T15:05:41.517371"
+                "updatedAt": "2026-09-03T15:21:18.385203"
               }
             ],
             "items": {
@@ -8134,7 +8244,7 @@
           },
           "version": {
             "deprecated": false,
-            "example": "1.16.1+DEVELOP",
+            "example": "1.16.5+DEVELOP",
             "title": "Ayon version",
             "type": "string"
           }
@@ -9265,7 +9375,9 @@
               "assignee.remove",
               "version.publish",
               "version.review",
-              "attrib.change"
+              "attrib.change",
+              "tags.change",
+              "subtype.change"
             ],
             "example": "comment",
             "title": "Activitytype",
@@ -11469,6 +11581,25 @@
         "title": "ReviewableProcessingStatus",
         "type": "object"
       },
+      "ReviewablesRequestModel": {
+        "description": "Base API model.",
+        "properties": {
+          "entityIds": {
+            "deprecated": false,
+            "description": "List of target Entity IDs (folders, products, versions, etc.) to fetch reviewables for.",
+            "items": {
+              "type": "string"
+            },
+            "title": "Entityids",
+            "type": "array"
+          }
+        },
+        "required": [
+          "entityIds"
+        ],
+        "title": "ReviewablesRequestModel",
+        "type": "object"
+      },
       "Root": {
         "description": "Setup root paths",
         "properties": {
@@ -11975,7 +12106,7 @@
         "properties": {
           "viewId": {
             "deprecated": false,
-            "example": "75d79418927111f1a877be9211392bcb",
+            "example": "1f887ac4a7ab11f1b4501e40c22760a4",
             "pattern": "^[0-9a-f]{32}$",
             "title": "View ID",
             "type": "string"
@@ -15855,7 +15986,7 @@
   "info": {
     "description": "Open VFX and Animation pipeline server",
     "title": "Ayon server",
-    "version": "1.16.1"
+    "version": "1.16.5"
   },
   "openapi": "3.1.0",
   "paths": {
@@ -15921,6 +16052,32 @@
           }
         },
         "summary": "Set Projects Access",
+        "tags": [
+          "Access"
+        ]
+      }
+    },
+    "/api/accessGroups": {
+      "get": {
+        "description": "Get a list of access group for a given project",
+        "operationId": "get_studio_access_groups",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/AccessGroupObject"
+                  },
+                  "title": "Response Get Studio Access Groups Api Accessgroups Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Get Studio Access Groups",
         "tags": [
           "Access"
         ]
@@ -19464,7 +19621,7 @@
     },
     "/api/connect": {
       "delete": {
-        "description": "Remove the Ynput cloud key from the database",
+        "description": "Remove the Ynput cloud key from the\ndatabase and disconnect from the Ynput cloud",
         "operationId": "delete_ynput_cloud_key",
         "responses": {
           "200": {
@@ -20541,6 +20698,33 @@
         "summary": "Enroll",
         "tags": [
           "Events"
+        ]
+      }
+    },
+    "/api/enum": {
+      "get": {
+        "description": "List all available enum resolvers.",
+        "operationId": "list_enums",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/EnumResolverInfo"
+                  },
+                  "title": "Response List Enums Api Enum Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "List Enums",
+        "tags": [
+          "Enums",
+          "Enums"
         ]
       }
     },
@@ -24011,6 +24195,30 @@
               "title": "Folder ID",
               "type": "string"
             }
+          },
+          {
+            "description": "If True, returns only the latest version",
+            "in": "query",
+            "name": "latest",
+            "required": false,
+            "schema": {
+              "default": false,
+              "description": "If True, returns only the latest version",
+              "title": "Latest",
+              "type": "boolean"
+            }
+          },
+          {
+            "description": "If True, returns only the latest approved versions",
+            "in": "query",
+            "name": "latest_done",
+            "required": false,
+            "schema": {
+              "default": false,
+              "description": "If True, returns only the latest approved versions",
+              "title": "Latest Done",
+              "type": "boolean"
+            }
           }
         ],
         "responses": {
@@ -24325,6 +24533,64 @@
           }
         },
         "summary": "Remove Guest User",
+        "tags": [
+          "Projects"
+        ]
+      },
+      "patch": {
+        "operationId": "patch_guest_user",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "email",
+            "required": true,
+            "schema": {
+              "title": "Email",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "project_name",
+            "required": true,
+            "schema": {
+              "pattern": "^[a-zA-Z0-9_]*$",
+              "title": "Project name",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GuestUserPatchModel"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Patch Guest User",
         "tags": [
           "Projects"
         ]
@@ -26062,6 +26328,30 @@
               "title": "Product ID",
               "type": "string"
             }
+          },
+          {
+            "description": "If True, returns only the latest version",
+            "in": "query",
+            "name": "latest",
+            "required": false,
+            "schema": {
+              "default": false,
+              "description": "If True, returns only the latest version",
+              "title": "Latest",
+              "type": "boolean"
+            }
+          },
+          {
+            "description": "If True, returns only the latest approved versions",
+            "in": "query",
+            "name": "latest_done",
+            "required": false,
+            "schema": {
+              "default": false,
+              "description": "If True, returns only the latest approved versions",
+              "title": "Latest Done",
+              "type": "boolean"
+            }
           }
         ],
         "responses": {
@@ -27044,6 +27334,30 @@
               "pattern": "^[0-9a-f]{32}$",
               "title": "Task ID",
               "type": "string"
+            }
+          },
+          {
+            "description": "If True, returns only the latest version",
+            "in": "query",
+            "name": "latest",
+            "required": false,
+            "schema": {
+              "default": false,
+              "description": "If True, returns only the latest version",
+              "title": "Latest",
+              "type": "boolean"
+            }
+          },
+          {
+            "description": "If True, returns only the latest approved versions",
+            "in": "query",
+            "name": "latest_done",
+            "required": false,
+            "schema": {
+              "default": false,
+              "description": "If True, returns only the latest approved versions",
+              "title": "Latest Done",
+              "type": "boolean"
             }
           }
         ],
@@ -28339,6 +28653,30 @@
               "title": "Version ID",
               "type": "string"
             }
+          },
+          {
+            "description": "If True, returns only the latest version",
+            "in": "query",
+            "name": "latest",
+            "required": false,
+            "schema": {
+              "default": false,
+              "description": "If True, returns only the latest version",
+              "title": "Latest",
+              "type": "boolean"
+            }
+          },
+          {
+            "description": "If True, returns only the latest approved versions",
+            "in": "query",
+            "name": "latest_done",
+            "required": false,
+            "schema": {
+              "default": false,
+              "description": "If True, returns only the latest approved versions",
+              "title": "Latest Done",
+              "type": "boolean"
+            }
           }
         ],
         "responses": {
@@ -29090,6 +29428,99 @@
         "summary": "Create Workfile Thumbnail",
         "tags": [
           "Thumbnails"
+        ]
+      }
+    },
+    "/api/projects/{project_name}/{entity_type}/reviewables/list": {
+      "post": {
+        "description": "Fetches reviewables for a batch of entity IDs passed in the request.",
+        "operationId": "get_reviewables_for_entities",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_name",
+            "required": true,
+            "schema": {
+              "pattern": "^[a-zA-Z0-9_]*$",
+              "title": "Project name",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Project level entity type is used in the endpoint path to specify the type of entity to operate on. It is usually one of 'folders', 'products', 'versions', 'representations', 'tasks', 'workfiles'. (trailing 's' is optional).",
+            "in": "path",
+            "name": "entity_type",
+            "required": true,
+            "schema": {
+              "description": "Project level entity type is used in the endpoint path to specify the type of entity to operate on. It is usually one of 'folders', 'products', 'versions', 'representations', 'tasks', 'workfiles'. (trailing 's' is optional).",
+              "title": "Project level entity type",
+              "type": "string"
+            }
+          },
+          {
+            "description": "If True, returns only the latest version",
+            "in": "query",
+            "name": "latest",
+            "required": false,
+            "schema": {
+              "default": false,
+              "description": "If True, returns only the latest version",
+              "title": "Latest",
+              "type": "boolean"
+            }
+          },
+          {
+            "description": "If True, returns only the latest approved versions",
+            "in": "query",
+            "name": "latest_done",
+            "required": false,
+            "schema": {
+              "default": false,
+              "description": "If True, returns only the latest approved versions",
+              "title": "Latest Done",
+              "type": "boolean"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReviewablesRequestModel"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/VersionReviewablesModel"
+                  },
+                  "title": "Response Get Reviewables For Entities Api Projects  Project Name   Entity Type  Reviewables List Post",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Reviewables For Entities",
+        "tags": [
+          "Reviewables"
         ]
       }
     },
@@ -31842,7 +32273,7 @@
             }
           },
           {
-            "example": "75d79a76927111f1a877be9211392bcb",
+            "example": "1f88846aa7ab11f1b4501e40c22760a4",
             "in": "path",
             "name": "view_id",
             "required": true,
@@ -31905,7 +32336,7 @@
             }
           },
           {
-            "example": "75d79a76927111f1a877be9211392bcb",
+            "example": "1f88846aa7ab11f1b4501e40c22760a4",
             "in": "path",
             "name": "view_id",
             "required": true,
@@ -31970,7 +32401,7 @@
             }
           },
           {
-            "example": "75d79a76927111f1a877be9211392bcb",
+            "example": "1f88846aa7ab11f1b4501e40c22760a4",
             "in": "path",
             "name": "view_id",
             "required": true,

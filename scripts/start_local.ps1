@@ -26,7 +26,13 @@ try {
 
     # Execute the CLI from services/mcp so imports resolve consistently.
     [Console]::Error.WriteLine("Executing CLI...")
-    uv run --no-project python -m ayon_mcp.cli @args
+    if ($env:AYON_MCP_ENABLE_TELEMETRY -match "^(1|true|yes)$") {
+        uv run opentelemetry-instrument `
+            --traces_exporter otlp --metrics_exporter otlp --logs_exporter otlp `
+            python -m ayon_mcp.cli @args
+    } else {
+        uv run python -m ayon_mcp.cli @args
+    }
 } finally {
     Pop-Location
 }

@@ -631,9 +631,16 @@ class TestListTasks:
         from ayon_mcp.tools.entities import list_tasks
 
         mock_api.get_tasks.return_value = iter([])
-        list_tasks("demo", folder_id="f1", task_types=["Modeling"], assignees=["bob"])
+        list_tasks(
+            "demo",
+            folder_id="f1",
+            task_names=["rendering"],
+            task_types=["Modeling"],
+            assignees=["bob"],
+        )
         call_kwargs = mock_api.get_tasks.call_args.kwargs
         assert call_kwargs["folder_ids"] == ["f1"]
+        assert call_kwargs["task_names"] == ["rendering"]
         assert call_kwargs["task_types"] == ["Modeling"]
         assert call_kwargs["assignees"] == ["bob"]
 

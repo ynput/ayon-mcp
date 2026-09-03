@@ -217,6 +217,7 @@ def list_folders(  # ruff: ignore[too-many-arguments]
 def list_tasks(  # ruff: ignore[too-many-arguments, too-many-positional-arguments]
     project_name: str,
     folder_id: str | None = None,
+    task_names: list[str] | None = None,
     task_types: list[str] | None = None,
     assignees: list[str] | None = None,
     statuses: list[str] | None = None,
@@ -226,9 +227,15 @@ def list_tasks(  # ruff: ignore[too-many-arguments, too-many-positional-argument
 ) -> EntityList[Task]:
     """List/filter tasks of a project.
 
+    To find a specific task by name (e.g. to check its status), pass
+    its name in `task_names` - do not guess at `statuses` or
+    `task_types` to search by name, those filter by status/type value,
+    not by task name.
+
     Args:
         project_name: Project to query.
         folder_id: Only tasks under this folder id.
+        task_names: Only tasks with these exact names, e.g. ["rendering"].
         task_types: Task type filter, e.g. ["Modeling", "Compositing"].
         assignees: Only tasks assigned to any of these AYON user names.
         statuses: Status name filter, e.g. ["Ready to start"].
@@ -244,6 +251,7 @@ def list_tasks(  # ruff: ignore[too-many-arguments, too-many-positional-argument
     tasks = api().get_tasks(
         project_name,
         folder_ids=[folder_id] if folder_id else None,
+        task_names=task_names,
         task_types=task_types,
         assignees=assignees,
         statuses=statuses,

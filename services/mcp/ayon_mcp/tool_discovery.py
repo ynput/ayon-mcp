@@ -106,6 +106,13 @@ class AyonDynamicToolProvider(BaseDynamicToolProvider[AyonTool]):
     async def get_tool_schema(self, tool_name: str) -> dict[str, Any]:
         """Return the schema and mutation confirmation requirement.
 
+        For a tool that requires confirmation, the target tool's own
+        parameters are wrapped under an ``arguments`` property so the
+        schema mirrors the actual `call_ayon_tool(tool_name, arguments,
+        confirm_mutation)` contract - `confirm_mutation` is a sibling of
+        `arguments`, never one of the target tool's own properties, so it
+        must not be nested inside `arguments` when calling `call_ayon_tool`.
+
         Returns:
             An OpenAI-style function schema with confirmation metadata.
 
@@ -117,17 +124,35 @@ class AyonDynamicToolProvider(BaseDynamicToolProvider[AyonTool]):
         if tool is None or not tool.requires_confirmation:
             return schema
 
-        parameters = schema["function"]["parameters"]
-        parameters.setdefault("properties", {})["confirm_mutation"] = {
-            "type": "boolean",
-            "description": (
-                "Set true only after the user explicitly authorized this "
-                "state-changing operation."
-            ),
+        target_parameters = schema["function"]["parameters"]
+        schema["function"]["parameters"] = {
+            "type": "object",
+            "properties": {
+                "arguments": {
+                    **target_parameters,
+                    "description": (
+                        f"{tool.name}'s own parameters, passed as the "
+                        "`arguments` value of the call_ayon_tool call."
+                    ),
+                },
+                "confirm_mutation": {
+                    "type": "boolean",
+                    "description": (
+                        "Top-level argument of call_ayon_tool itself - a "
+                        "sibling of `tool_name` and `arguments`, never "
+                        "nested inside `arguments`. Set true only after "
+                        "the user explicitly authorized this "
+                        "state-changing operation."
+                    ),
+                },
+            },
+            "required": ["arguments", "confirm_mutation"],
         }
         schema["function"]["description"] += (
-            " This operation changes AYON data and requires "
-            "confirm_mutation=true."
+            " This operation changes AYON data. Call call_ayon_tool with "
+            "confirm_mutation=true as a top-level argument (a sibling of "
+            "tool_name and arguments) - do not put confirm_mutation "
+            "inside arguments."
         )
         return schema
 

@@ -181,14 +181,91 @@ uv run python ./services/mcp/scripts/generate_openapi_tools.py
 ## Development and tests
 
 ### Running tests
-To run integration test (requiring connection to the server), either set
+Test dependencies (pytest, pytest-ayon, dotenv, ...) live in the `test`
+dependency group and are not installed by a plain `uv sync`. Install them
+with:
+
+```sh
+uv sync --group test
+```
+
+To run integration tests (requiring connection to the server), either set
 `AYON_SERVER_URL` and `AYON_API_KEY` or create `.env` file in `./tests`.
 Once set, the integration tests will run. There is also pytest mark *integration*.
 
 ```sh
-uv sync
 uv run pytest
 ```
+
+### LLM agent tests
+
+`tests/test_llm_agent.py` drives the MCP server through a real local model
+(via [Ollama](https://ollama.com)) to check that it can discover and call
+AYON tools correctly. These are marked `llm` and **disabled by default**
+(`addopts` deselects `-m "not llm"`) since they need Ollama running with a
+tool-calling model pulled.
+
+Setup:
+
+```sh
+# installs Ollama if missing, starts it, and pulls the default model (qwen2.5:7b)
+./scripts/setup_ollama.ps1   # or scripts/setup_ollama.sh on Linux/macOS
+```
+
+Run just the LLM tests:
+
+```sh
+uv run pytest -m llm tests/test_llm_agent.py
+```
+
+Configure via environment variables:
+
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `OLLAMA_HOST` | `http://localhost:11434` | Ollama API base URL |
+| `OLLAMA_MODEL` | `qwen2.5:7b` | Model tag to drive the agent with |
+
+If Ollama isn't reachable or the model isn't pulled, the tests skip
+themselves rather than fail. Each scenario's outcome (checks, tool calls,
+token/latency metrics) is written to `tests/reports/`.
+
+#### Claude instead of a local model
+
+`tests/test_llm_agent_claude.py` runs the same scenarios against the real
+Anthropic API instead of Ollama - useful to compare a small local model
+against Claude, at the cost of real API credits per run. Also marked `llm`
+and disabled by default.
+
+```sh
+ANTHROPIC_API_KEY=sk-ant-... uv run pytest -m llm tests/test_llm_agent_claude.py
+```
+
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `ANTHROPIC_API_KEY` | — | Required; tests skip themselves if unset |
+| `ANTHROPIC_MODEL` | `claude-opus-5` | Model id to drive the agent with |
+
+The `OTEL_EXPORTER_OTLP_ENDPOINT`/`OTEL_EXPORTER_OTLP_TRACES_ENDPOINT`
+telemetry options below apply here too.
+
+#### Optional: telemetry
+
+When an OTLP collector is reachable at `OTEL_EXPORTER_OTLP_ENDPOINT`, the
+spawned MCP server is launched through `opentelemetry-instrument` so its
+real traces/metrics show up there too (mirrors the split the Dockerfile
+uses: metrics/logs go through Vector's OTLP source, traces go straight to
+Tempo's OTLP receiver, since Vector can't round-trip OTLP trace framing):
+
+```sh
+OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4317 \
+OTEL_EXPORTER_OTLP_TRACES_ENDPOINT=http://localhost:4319 \
+uv run pytest -m llm tests/test_llm_agent.py
+```
+
+Point these at wherever your Vector/Tempo (or other OTLP-compatible)
+collector's endpoints are published on the host.
+
+For example telemetry stack, see ayon-vector repo.
 
 ## Notes
 With local / stdio mode, the output can be cluttered by messages coming from your shell profile

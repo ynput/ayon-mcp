@@ -27,4 +27,10 @@ echo "Installing dependencies in $service_root ..." >&2
 uv sync --no-install-project >/dev/null
 
 echo "Executing CLI..." >&2
-uv run --no-project python -m ayon_mcp.cli "$@"
+if [[ "${AYON_MCP_ENABLE_TELEMETRY:-}" =~ ^(1|true|yes)$ ]]; then
+    uv run opentelemetry-instrument \
+        --traces_exporter otlp --metrics_exporter otlp --logs_exporter otlp \
+        python -m ayon_mcp.cli "$@"
+else
+    uv run python -m ayon_mcp.cli "$@"
+fi

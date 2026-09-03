@@ -17,19 +17,23 @@ dependencies = [
     "httpx",
     "loguru",
     "mcp>=1.28.1",
-    "pytest-print>=1.3.0",
-    "pytest-ayon @ git+https://github.com/ynput/pytest-ayon.git",
-    "dotenv>=0.9.9",
     "chuk-tool-processor>=0.26.1",
     "opentelemetry-distro>=0.65b0",
+    "tiktoken>=0.14.0",
 ]
 
 [dependency-groups]
 dev = [
-    "pytest>=8",
-    "pytest-asyncio>=0.24",
     "ruff>=0.14",
     "ty"
+]
+test = [
+    "pytest>=8",
+    "pytest-asyncio>=0.24",
+    "pytest-print>=1.3.0",
+    "pytest-ayon @ git+https://github.com/ynput/pytest-ayon.git",
+    "dotenv>=0.9.9",
+    "anthropic",
 ]
 
 [project.scripts]
@@ -50,7 +54,7 @@ extra-paths = [
 [tool.pytest.ini_options]
 log_cli = true
 log_cli_level = "INFO"
-addopts = "-ra -q"
+addopts = "-ra -q -m \"not llm\""
 markers = [
     "unit: Unit tests",
     "integration: Integration tests",
@@ -58,4 +62,5 @@ markers = [
     "cli: CLI tests",
     "slow: Slow tests",
     "server: Tests that require a running AYON server",
+    "llm: Tests that drive the MCP server through a real model (local Ollama or the Anthropic API)",
 ]

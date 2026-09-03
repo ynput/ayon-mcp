@@ -21,6 +21,7 @@ dependencies = [
     "pytest-ayon @ git+https://github.com/ynput/pytest-ayon.git",
     "dotenv>=0.9.9",
     "chuk-tool-processor>=0.26.1",
+    "opentelemetry-distro>=0.65b0",
 ]
 
 [dependency-groups]

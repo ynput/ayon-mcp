@@ -15,6 +15,7 @@ from fastmcp.server.middleware import CallNext, Middleware, MiddlewareContext
 # from fastmcp.server.providers.openapi import MCPType, RouteMap
 from .client import get_ayon_api, set_global_ayon_client
 from .instructions import INSTRUCTIONS, OPENAPI_INSTRUCTIONS
+from .metrics import TokenMetrics
 from .openapi_codegen import sync_openapi_tools_from_server
 from .rest_client import RestApiClient, set_global_rest_client
 from .tool_discovery import create_discovery_tools
@@ -209,6 +210,7 @@ def run_remote(base_url: str, api_key: str) -> FastMCP:
         api_key=api_key,
     )
     mcp.add_middleware(RemoteApiKeyMiddleware(base_url))
+    mcp.add_middleware(TokenMetrics())
     mcp.run(
         transport="streamable-http",
         host="0.0.0.0",  # ruff:ignore[hardcoded-bind-all-interfaces]
@@ -237,6 +239,7 @@ def run_local(base_url: str, api_key: str) -> FastMCP:
             resolved_api_key,
         )
     )
+    mcp.add_middleware(TokenMetrics())
     mcp.run(show_banner=False)
     return mcp
 

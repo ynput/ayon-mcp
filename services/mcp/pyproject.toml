@@ -7,7 +7,7 @@ authors = [
     { name = "Ynput Team", email = "team@ynput.io" }
 ]
 license = "Apache-2.0"
-requires-python = ">=3.11"
+requires-python = ">=3.13"
 keywords = ["ayon", "mcp", "pipeline", "vfx"]
 dependencies = [
     "loguru",
@@ -17,6 +17,10 @@ dependencies = [
     "pydantic>=2.7",
     "click>=8.2",
     "chuk-tool-processor>=0.26.1",
+    "tiktoken>=0.14.0",
+    "structlog>=26.1.0",
+    "opentelemetry-distro>=0.65b0",
+    "opentelemetry-exporter-otlp-proto-grpc>=1.44.0",
 ]
 
 [project.urls]

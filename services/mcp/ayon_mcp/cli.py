@@ -24,13 +24,20 @@ DEFAULT_PORT = 5000
 @click.option(
     "--host", "-h",
     default=DEFAULT_HOST,
-    help="AYON server URL (or set AYON_SERVER_URL)")
+    envvar=HOST_ENV_VAR,
+    show_envvar=True,
+    help="AYON server URL",
+)
 @click.option(
     "--port", "-p",
     default=DEFAULT_PORT, type=int, help="AYON server port (default 5000)")
 @click.option(
     "--api-key",
-    default=None, help="AYON API key (or set AYON_API_KEY)")
+    default=None,
+    envvar=KEY_ENV_VAR,
+    show_envvar=True,
+    help="AYON API key"
+)
 def main(
     host: str,
     port: int | None,
@@ -49,35 +56,35 @@ def main(
         click.UsageError: If required arguments are missing or invalid.
 
     """
-    if not port:  # ruff:ignore[collapsible-if]
-        # If port is not provided, try to get it from the host
-        # to support both "http://localhost:5000"
-        # and "http://localhost" formats.
-        if ":" in host:
-            host, port_str = host.rsplit(":", 1)
-            try:
-                port = int(port_str)
-            except ValueError as e:
-                msg = (
-                    f"Invalid port number in host URL: {port_str!r}. "
-                    "Port must be an integer.")
-                raise click.UsageError(msg) from e
+    # Only treat the last colon as a port separator when it is followed
+    # by digits — a scheme URL without a port ("http://localhost") also
+    # contains a colon.
+    head, sep, tail = host.rpartition(":")
+    if sep and tail.isdigit():
+        host = head
+        port = int(tail)
+    elif sep and "/" not in tail:
+        msg = (
+            f"Invalid port number in host URL: {tail!r}. "
+            "Port must be an integer.")
+        raise click.UsageError(msg)
 
     server_url = f"{host}:{port}"
     if not api_key:
         api_key = os.getenv(KEY_ENV_VAR)
-        if not api_key:
+        if not api_key and not remote:
             msg = (
-                "AYON API key is required in remote mode. "
+                "AYON API key is required in local mode. "
                 "Set the AYON_API_KEY environment variable "
                 "or pass it as --api-key.")
             raise click.UsageError(msg)
 
     if remote:
-        run_remote_server(server_url, api_key)
-    else:
-        # run in local mode
-        run_local_server(server_url, api_key)
+        run_remote_server(server_url)
+        return
+
+    # run in local mode
+    run_local_server(server_url, api_key)  # ty:ignore[invalid-argument-type]
 
 
 if __name__ == "__main__":

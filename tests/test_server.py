@@ -9,11 +9,6 @@ from mcp.client.stdio import stdio_client
 from unittest.mock import MagicMock
 
 import pytest
-from typing import TYPE_CHECKING
-
-if TYPE_CHECKING:
-    from pytest_print import Printer
-
 
 
 # ---------------------------------------------------------------------------
@@ -25,7 +20,12 @@ class TestCollect:
         from ayon_mcp.utils import collect
 
         result = collect([{"id": "a"}, {"id": "b"}], limit=10)
-        assert result == {"count": 2, "truncated": False, "items": [{"id": "a"}, {"id": "b"}]}
+        assert result == {
+            "count": 2,
+            "truncated": False,
+            "next_offset": None,
+            "items": [{"id": "a"}, {"id": "b"}],
+        }
 
     def test_truncates_and_flags_when_over_limit(self):
         from ayon_mcp.utils import collect
@@ -54,7 +54,12 @@ class TestCollect:
         from ayon_mcp.utils import collect
 
         result = collect([], limit=10)
-        assert result == {"count": 0, "truncated": False, "items": []}
+        assert result == {
+            "count": 0,
+            "truncated": False,
+            "next_offset": None,
+            "items": [],
+        }
 
 
 class TestEntityFields:

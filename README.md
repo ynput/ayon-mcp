@@ -19,9 +19,19 @@ Two environment variables (or the matching CLI flags):
 | --- | --- |
 | `AYON_SERVER_URL` | e.g. `https://ayon.mystudio.com` or `http://localhost:5001` |
 | `AYON_API_KEY` | API key of the user the assistant acts as |
+| `AYON_MCP_READ_ONLY` | Set to `true` to expose only read tools (optional) |
 
 The assistant inherits the permissions of that user — use a restricted
 user if you only want read access.
+
+### Read-only mode
+
+With `AYON_MCP_READ_ONLY=true` (accepted truthy values: `1`, `true`,
+`yes`, `on`), write tools are not registered and the REST gateway
+(`call_rest_endpoint`) accepts only GET and HEAD requests. When running
+as an AYON service, the same toggle is available in the addon settings
+(Studio Settings → AYON MCP server → Read-only mode); the environment
+variable takes precedence when both are set.
 
 ## Usage
 
@@ -52,12 +62,12 @@ Add following:
   "servers": {
     "ayon-mcp": {
       "type": "stdio",
-      "command": "powershell",
-      "args": [
-        "path/to/ayon-mcp-repo/scripts/start_local.ps1",
-        "--api-key", "${ayon_api_key}",
-				"--host", "${ayon_server}$",
-				"--port", "${ayon_port}"
+				"command": "pwsh",
+				"args": [
+				"-NoLogo", "-NonInteractive", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command",
+        "/path/to/ayon-mcp/scripts/start_local.ps1",
+				"--api-key", "${api_key}",
+        "--host", "http://localhost:5000"
       ],
       "env": {
       }
@@ -95,10 +105,9 @@ On Linux and macOS, use `bash` with `scripts/start_local.sh` instead.
 claude mcp add ayon-mcp \
   -e AYON_SERVER_URL=http://localhost:5000 \
   -e AYON_API_KEY=your-api-key \
-  -- powershell "path/to/ayon-mcp-repo/scripts/start_local.ps1"
+  -- pwsh "path/to/ayon-mcp-repo/scripts/start_local.ps1"
 ```
 
-On Linux and macOS replace `start_local.ps1` with `start_local.sh`
 
 ### Remote (http)
 
@@ -106,9 +115,9 @@ On Linux and macOS replace `start_local.ps1` with `start_local.sh`
 claude mcp add --transport http ayon-mcp \
   -e AYON_SERVER_URL=http://localhost:5000 \
   -e AYON_API_KEY=your-api-key \
-  -- powershell "path/to/ayon-mcp-repo/scripts/start_local.ps1"
+  -- pwsh "path/to/ayon-mcp-repo/scripts/start_local.ps1"
 ```
-
+On Linux and macOS, use `bash` with `scripts/start_local.sh` instead.
 
 ### Claude Desktop
 
@@ -121,45 +130,36 @@ The MCP endpoint is then served at `http://<host>:8088/mcp`.
 The port can be changed using environment variable `AYON_MCP_PORT`
 
 
-
 ## Tools
 
 | Area | Tools |
 | --- | --- |
-| Projects | `list_projects`, `get_project`, `get_server_info` |
+| Projects | `list_projects`, `get_project`, `get_project_anatomy`, `get_server_info` |
+| Knowledge | `get_documentation`, `list_attributes`, `get_graphql_schema`, `get_addon_settings_schema` |
 | Entities (read) | `get_folder_hierarchy`, `list_folders`, `list_tasks`, `list_products`, `list_versions`, `list_representations`, `get_entity`, `query_graphql` |
 | Entities (write) | `create_entity`, `update_entity`, `delete_entity`, `add_comment` |
 | Events | `list_events`, `get_event`, `dispatch_event` |
 | Settings | `list_addons`, `list_bundles`, `get_addon_settings`, `set_addon_settings` |
 
+The knowledge tools let the assistant learn what is valid before
+acting: project vocabulary (`get_project_anatomy`), attribute
+definitions (`list_attributes`), the GraphQL schema
+(`get_graphql_schema`) and addon settings schemas
+(`get_addon_settings_schema`). `get_documentation` serves concise
+concept docs (also exposed as MCP resources under `ayon://docs/...`).
+
 Write tools modify production data through the standard AYON operations
 endpoint, so server-side validation, permissions and events all apply.
 
-### Generated OpenAPI Tools (Optional)
+List tools are paginated: responses carry `count`, `truncated` and
+`next_offset` fields; pass `next_offset` back as `offset` to fetch the
+next page.
 
-This repository can expose an additional auto-generated tool layer from
-`services/mcp/ayon_openapi.json`.
-
-- Generated code location (ignored by Git):
-  `services/mcp/ayon_mcp/tools/openapi_generated/`
-- Generator script:
-  `services/mcp/scripts/generate_openapi_tools.py`
-- Transport client used by generated tools:
-  `RestApiClient` via `services/mcp/ayon_mcp/rest_client.py`
-
-By default, generated OpenAPI tools are **disabled**.
-
-Enable them by setting:
-
-- `AYON_MCP_ENABLE_OPENAPI_TOOLS=true`
-
-Accepted truthy values are: `1`, `true`, `yes`, `on` (case-insensitive).
-
-Regenerate after updating the OpenAPI spec:
-
-```sh
-uv run python ./services/mcp/scripts/generate_openapi_tools.py
-```
+Anything not covered by a dedicated tool is reachable through the REST
+gateway (`list_rest_endpoints`, `get_rest_endpoint`,
+`call_rest_endpoint`), which discovers endpoints from the server's
+OpenAPI spec at runtime (`services/mcp/ayon_openapi.json` is the bundled
+fallback used when the server cannot be reached).
 
 ## Development and tests
 
@@ -172,3 +172,8 @@ Once set, the integration tests will run. There is also pytest mark *integration
 uv sync
 uv run pytest
 ```
+
+## Notes
+With local / stdio mode, the output can be cluttered by messages coming from your shell profile
+init - you might want to mitigate that to reduce amount of warnings from your agent console. For
+example how to do it with powershell, follow the example of adding MCP server to VSCode.

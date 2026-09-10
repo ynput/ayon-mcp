@@ -14,7 +14,6 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "services" / "mcp"))
 dotenv.load_dotenv(dotenv.find_dotenv(), override=True)
 
 
-
 def pytest_configure(config: pytest.Config) -> None:
     config.addinivalue_line(
         "markers",

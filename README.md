@@ -173,6 +173,20 @@ uv sync
 uv run pytest
 ```
 
+### Benchmarking the LLM agent
+
+Run the LLM scenarios repeatedly and aggregate their efficiency metrics:
+
+```sh
+uv run python scripts/benchmark_llm_agent.py --runs 5
+```
+
+The benchmark continues after a failing pytest run. It writes each raw report
+and an aggregate summary to `tests/reports/benchmarks/`. The aggregate reports
+average pass rate, turns, prompt tokens, completion tokens, and wall time per
+scenario. Prompt tokens are cumulative across all model turns in a scenario,
+so a run that needs more tool-calling turns will cost more.
+
 ## Notes
 With local / stdio mode, the output can be cluttered by messages coming from your shell profile
 init - you might want to mitigate that to reduce amount of warnings from your agent console. For

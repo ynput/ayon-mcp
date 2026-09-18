@@ -2,23 +2,53 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Iterable, Literal
 
-from ayon_mcp.app import mcp
-from ayon_mcp.connection import api
+from ayon_mcp.client import get_global_ayon_client as api
 from ayon_mcp.utils import collect
+
+from .utils import _CamelModel
 
 EVENT_FIELDS = {
     "id", "topic", "project", "user", "sender", "status",
     "description", "createdAt", "updatedAt",
 }
 
+TStatuses = Iterable[
+    Literal[
+        "pending",
+        "in_progress",
+        "finished",
+        "failed",
+        "aborted",
+        "restarted",
+    ]
+]
 
-@mcp.tool()
-def list_events(
+
+class EventItem(_CamelModel):
+    """Event item."""
+    id: str
+    hash: str | None = None
+    topic: str
+    sender: str | None = None
+    sender_type: str | None = None
+    project: str | None = None
+    user: str | None = None
+    depends_on: str | None = None
+    status: str | None = None
+    retries: int | None = None
+    description: str | None = None
+    summary: dict[str, Any] | None = None
+    payload: dict[str, Any] | None = None
+    created_at: str | None = None
+    updated_at: str | None = None
+
+
+def list_events(  # ruff: ignore[too-many-arguments, too-many-positional-arguments]
     topics: list[str] | None = None,
     project_names: list[str] | None = None,
-    statuses: list[str] | None = None,
+    statuses: TStatuses | None = None,
     users: list[str] | None = None,
     newer_than: str | None = None,
     older_than: str | None = None,
@@ -37,7 +67,8 @@ def list_events(
         older_than: ISO 8601 timestamp.
         limit: Maximum number of events to return (default 50, max 500).
 
-    Returns compact event records; use `get_event` for full payload.
+    Returns:
+        compact event records; use `get_event` for full payload.
     """
     events = api().get_events(
         topics=topics,
@@ -51,24 +82,38 @@ def list_events(
     return collect(events, limit)
 
 
-@mcp.tool()
-def get_event(event_id: str) -> dict[str, Any]:
-    """Get one event with full detail, including summary and payload."""
+def get_event(event_id: str) -> EventItem:
+    """Get one event with full detail.
+
+    Including summary and payload.
+
+    Args:
+        event_id: Event ID (hex string).
+
+    Returns:
+        EventItem with full detail.
+
+    Raises:
+        RuntimeError: If the event was not found.
+
+    """
     event = api().get_event(event_id)
     if not event:
-        raise RuntimeError(f"Event {event_id!r} was not found.")
-    return event
+        msg = f"Event {event_id!r} was not found."
+        raise RuntimeError(msg)
+
+    return EventItem.model_validate(event)
 
 
-@mcp.tool()
-def dispatch_event(
+def dispatch_event(  # ruff: ignore[too-many-arguments]
     topic: str,
     project_name: str | None = None,
     description: str | None = None,
     summary: dict[str, Any] | None = None,
     payload: dict[str, Any] | None = None,
+    *,
     finished: bool = True,
-) -> dict[str, Any]:
+) -> EventItem:
     """Dispatch a new event to the AYON event stream.
 
     Other services (and users watching the event viewer) will see it.
@@ -82,6 +127,10 @@ def dispatch_event(
         payload: Full JSON-serializable payload dict.
         finished: Whether the event is created in finished state
             (False creates a pending event another service may process).
+
+    Returns:
+        EventItem with the new event's ID and topic.
+
     """
     response = api().dispatch_event(
         topic,
@@ -92,4 +141,12 @@ def dispatch_event(
         finished=finished,
     )
     data = response.data if hasattr(response, "data") else {}
-    return {"event_id": (data or {}).get("id"), "topic": topic}
+    return EventItem(
+        id=(data or {}).get("id"),  # ty:ignore[invalid-argument-type]
+        topic=topic,
+        project=project_name,
+        description=description,
+        summary=summary,
+        payload=payload,
+        status="finished" if finished else "pending",
+    )

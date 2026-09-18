@@ -4,6 +4,7 @@ __pycache__/
 *.egg-info/
 dist/
 build/
+package/
 
 # Environments
 .venv/
@@ -16,3 +17,8 @@ build/
 
 # OS
 .DS_Store
+
+services/mcp/ayon_mcp/tools/openapi_generated/*
+
+# LLM agent test reports
+tests/reports/

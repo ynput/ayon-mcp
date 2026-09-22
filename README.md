@@ -1,4 +1,4 @@
-# ayon-mcp
+# AYON MCP Server
 
 MCP ([Model Context Protocol](https://modelcontextprotocol.io)) server for
 the [AYON](https://ynput.io/ayon/) pipeline platform. It lets AI assistants
@@ -25,7 +25,7 @@ Two environment variables (or the matching CLI flags):
 
 | Variable | Meaning |
 | --- | --- |
-| `AYON_SERVER_URL` | e.g. `https://ayon.mystudio.com` or `http://localhost:5001` |
+| `AYON_SERVER_URL` | e.g. `https://ayon.mystudio.com` or `http://localhost:5000` |
 | `AYON_API_KEY` | API key of the user the assistant acts as |
 
 The assistant inherits the permissions of that user — use a restricted

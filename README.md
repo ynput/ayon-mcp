@@ -5,6 +5,14 @@ the [AYON](https://ynput.io/ayon/) pipeline platform. It lets AI assistants
 like Claude browse and operate an AYON server: projects, folder hierarchies,
 tasks, publishes, the event stream, and addon settings.
 
+> [!WARNING]
+> Not recommended for production use. An LLM-driven assistant can call the
+> wrong tool, or call the right tool with wrong arguments, and write tools
+> go through AYON's operations endpoint with real permissions — mistakes can
+> mutate or delete production data. Use a restricted API key, review
+> mutations before confirming, and prefer a non-production server until
+> you've validated the behavior for your workflow.
+
 ## Requirements
 
 - Python 3.10+ (or [uv](https://docs.astral.sh/uv/), which handles Python for you)
@@ -28,8 +36,8 @@ user if you only want read access.
 ## Remote MCP server as AYON service
 You can quickly setup MCP server for remote connections by using it as AYON service:
 
-1) Install ayon-mcp as AYON addon (build it if necesseary `python -X dev ./create_package.py`)
-2) Setup the service - in AYON, go the Services (`V+V`) > New Service, select your host, pick *AYON MCP Server* addon, select the version. Take care for selecting proper port (the default one *8088* might be in use already). If you change the port, set also environment variable `AYON_MCP_PORT` so the service can configure it properly.
+1) Install ayon-mcp as an AYON addon (build it if necessary: `python -X dev ./create_package.py`)
+2) Set up the service - in AYON, go to Services (`V+V`) > New Service, select your host, pick the *AYON MCP Server* addon, and select the version. Take care to select a free port (the default, *8088*, might already be in use). If you change the port, also set the environment variable `AYON_MCP_PORT` so the service configures it properly.
 
 Once done, service will start and you can add MCP server as remote server. See examples below.
 
@@ -102,16 +110,35 @@ claude mcp add ayon-mcp \
 ### Remote (http)
 
 ```sh
-claude mcp add --transport http ayon-mcp \
-  -e AYON_SERVER_URL=http://localhost:5000 \
-  -e AYON_API_KEY=your-api-key \
-  -- pwsh "path/to/ayon-mcp-repo/scripts/start_local.ps1"
+claude mcp add --transport http ayon-mcp-remote \
+  http://host:8088/mcp \
+  --header "x-api-key: your-api-key"
 ```
-On Linux and macOS, use `bash` with `scripts/start_local.sh` instead.
 
 ### Claude Desktop
 
-For Claude Desktop follow [this guide](https://support.claude.com/en/articles/10949351-getting-started-with-local-mcp-servers-on-claude-desktop).
+Claude Desktop only supports local (stdio) MCP servers configured through its
+`claude_desktop_config.json` — see
+[this guide](https://support.claude.com/en/articles/10949351-getting-started-with-local-mcp-servers-on-claude-desktop)
+for the file's location on your platform. Add:
+
+```json
+{
+  "mcpServers": {
+    "ayon-mcp": {
+      "command": "pwsh",
+      "args": [
+        "-NoLogo", "-NonInteractive", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command",
+        "/path/to/ayon-mcp/scripts/start_local.ps1",
+        "--api-key", "your-api-key",
+        "--host", "http://localhost:5000"
+      ]
+    }
+  }
+}
+```
+
+On Linux and macOS, use `bash` with `scripts/start_local.sh` instead.
 
 ### Streamable HTTP
 

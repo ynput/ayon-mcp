@@ -1,0 +1,20 @@
+services:
+  ayon-mcp:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: ayon-mcp-service
+    ports:
+      - "8088:8088"
+    environment:
+      AYON_SERVER_URL: ${AYON_SERVER_URL:?Set AYON_SERVER_URL in your environment or .env}
+      AYON_API_KEY: ${AYON_API_KEY:?Set AYON_API_KEY in your environment or .env}
+    networks:
+      - default
+      - ayon-observability
+    restart: unless-stopped
+
+networks:
+  ayon-observability:
+    name: ayon-observability
+    external: true

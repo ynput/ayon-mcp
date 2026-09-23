@@ -250,7 +250,8 @@ def build_frontend() -> None:
         raise RuntimeError(msg)
 
     subprocess.run([yarn_executable, "install"], cwd=FRONTEND_ROOT, check=True)
-    subprocess.run([yarn_executable, "run", "build"], cwd=FRONTEND_ROOT, check=True)
+    subprocess.run([yarn_executable, "run", "build"],
+                   cwd=FRONTEND_ROOT, check=True)
     if not os.path.exists(FRONTEND_DIST_ROOT):
         msg = "Frontend build failed. Did not find 'dist' folder."
         raise RuntimeError(msg)

@@ -35,4 +35,3 @@ Safety rules:
 - For bulk operations, verify scope and intent because changes can affect
   production data.
 """
-

@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import json
 import time
-from collections import defaultdict
 from contextlib import suppress
 from typing import TYPE_CHECKING, Any
 
@@ -12,7 +11,6 @@ from fastmcp.server.middleware import CallNext, Middleware, MiddlewareContext
 from opentelemetry import metrics
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Iterable
 
     import mcp.types as mcp_types
     from fastmcp.tools import ToolResult

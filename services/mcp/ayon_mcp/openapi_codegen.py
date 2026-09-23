@@ -129,7 +129,7 @@ def _unique_py_name(base: str, used: set[str]) -> str:
     return candidate
 
 
-def _collect_operations(spec: dict[str, Any]) -> list[Operation]:
+def _collect_operations(spec: dict[str, Any]) -> list[Operation]:  # ruff: ignore[complex-structure, too-many-locals]
     paths = spec.get("paths") or {}
     operations: list[Operation] = []
 
@@ -441,7 +441,7 @@ def canonical_spec_hash(spec: dict[str, Any]) -> str:
 async def _fetch_openapi_spec_with_client(
     client: RestApiClient,
     *,
-    timeout: float,
+    timeout: float,  # ruff: ignore[async-function-with-timeout]
     api_key: str,
 ) -> dict[str, Any]:
     headers = {"x-api-key": api_key} if api_key else None

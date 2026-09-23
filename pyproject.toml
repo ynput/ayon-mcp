@@ -51,6 +51,9 @@ extra-paths = [
     "./services/mcp",
 ]
 
+[tool.mypy]
+files = ["services/mcp"]
+
 [tool.pytest.ini_options]
 log_cli = true
 log_cli_level = "INFO"

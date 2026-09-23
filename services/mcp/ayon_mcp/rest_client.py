@@ -31,10 +31,10 @@ class RestApiClient:
         path: str,
         *,
         params: dict[str, Any] | None = None,
-        json: Any | None = None,
-        data: Any | None = None,
+        json: Any | None = None,  # ruff: ignore[any-type]
+        data: Any | None = None,  # ruff: ignore[any-type]
         headers: dict[str, str] | None = None,
-    ) -> Any:
+    ) -> Any:  # ruff: ignore[any-type]
         """Send a request and return parsed JSON when possible.
 
         Args:
@@ -74,7 +74,7 @@ class RestApiClient:
 
 def set_global_rest_client(client: RestApiClient | None) -> None:
     """Set process-global RestApiClient used by generated OpenAPI tools."""
-    global _REST_CLIENT
+    global _REST_CLIENT  # ruff: ignore[global-statement]
     _REST_CLIENT = client
 
 

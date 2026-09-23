@@ -598,7 +598,8 @@ def sync_openapi_tools_from_server(
     return True
 
 
-def _main() -> None:
+def main() -> None:
+    """Command line entrypoint for generating OpenAPI tools."""
     operation_count, group_count = generate_openapi_tools()
     print(  # ruff: ignore[print]
         "Generated",
@@ -610,4 +611,4 @@ def _main() -> None:
 
 
 if __name__ == "__main__":
-    _main()
+    main()

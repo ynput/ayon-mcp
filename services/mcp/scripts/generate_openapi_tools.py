@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from ayon_mcp.openapi_codegen import _main
+from ayon_mcp.openapi_codegen import main
 
 if __name__ == "__main__":
-    _main()
+    main()

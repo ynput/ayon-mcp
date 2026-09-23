@@ -32,7 +32,7 @@ _tool_call_duration = _meter.create_histogram(
 _DISPATCH_TOOLS = {"call_ayon_tool": "tool_name"}
 
 
-def resolve_tool_name(name: str, arguments: Any) -> str:
+def resolve_tool_name(name: str, arguments: Any) -> str:  # ruff: ignore[any-type]
     """Resolve the tool a call is really attributed to.
 
     Args:
@@ -53,7 +53,7 @@ def resolve_tool_name(name: str, arguments: Any) -> str:
     return inner if isinstance(inner, str) and inner else name
 
 
-def count_tokens(value: Any) -> int:
+def count_tokens(value: Any) -> int:  # ruff: ignore[any-type]
     """Count tokens for any serializable value.
 
     Args:
@@ -73,7 +73,7 @@ def count_tokens(value: Any) -> int:
 class TokenMetrics(Middleware):
     """Token metrics middleware."""
 
-    async def on_call_tool(
+    async def on_call_tool(  # ruff: ignore[no-self-use]
             self,
             context: MiddlewareContext[mcp_types.CallToolRequestParams],
             call_next: CallNext[mcp_types.CallToolRequestParams, object],

@@ -189,7 +189,7 @@ class AyonDynamicToolProvider(BaseDynamicToolProvider[AyonTool]):
             result = tool.function(**arguments)
             if inspect.isawaitable(result):
                 result = await result
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:  # ruff: ignore[blind-except]
             return {"success": False, "error": str(exc)}
 
         return {"success": True, "result": result}

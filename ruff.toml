@@ -46,22 +46,22 @@ pydocstyle.convention = "google"
 select = ["ALL"]
 ignore = [
     "PTH",
-    "ANN204",  # missing-return-type-special-method
-    "COM812",  # missing-trailing-comma
-    "S603",    # subprocess-without-shell-equals-true
-    "ERA001",  # commented-out-code
-    "TRY003",  # raise-vanilla-args
-    "UP006",   # non-pep585-annotation: older python version (type vs. Type)
-    "UP007",   # non-pep604-annotation-union: ..^
-    "UP035",   # deprecated-import: ..
-    "UP045",   # non-pep604-annotation-optional: Use `X | None` for type annotations
-    "ARG002",  # unused-method-argument
-    "INP001",  # implicit-namespace-package: add `__init__.py` to namespaced package
-    "FIX002",  # line-contains-todo: FIX all TODOs
-    "TD003",   # missing-todo-link: missing issue link
-    "S404",    # suspicious-subprocess-import: subprocess module can be insecure
-    "PLC0415", # import-outside-top-level: import must be on top of the file
-    "CPY001",  # missing-copyright-notice: missing copyright header
+    "missing-return-type-special-method",
+    "missing-trailing-comma",
+    "subprocess-without-shell-equals-true",
+    "commented-out-code",
+    "raise-vanilla-args",
+    "non-pep585-annotation",  # older python version (type vs. Type)
+    "non-pep604-annotation-union",
+    "deprecated-import",
+    "non-pep604-annotation-optional",  # Use `X | None` for type annotations
+    "unused-method-argument",
+    "implicit-namespace-package",  # add `__init__.py` to namespaced package
+    "line-contains-todo",
+    "missing-todo-link", 
+    "suspicious-subprocess-import",  # subprocess module can be insecure
+    "import-outside-top-level", # import must be on top of the file
+    "missing-copyright-notice",  # missing-copyright-notice: missing copyright header
 ]
 
 # Allow fix for all enabled rules (when `--fix`) is provided.
@@ -100,4 +100,4 @@ docstring-code-line-length = "dynamic"
 
 [lint.per-file-ignores]
 # mixed case for variable names (needed by pyblish context and instance
-"client/*/api/datatypes.py" = ["N815"]
+"tests/*.py" = ["assert", "magic-value-comparison"]  # allow asserts and magical values

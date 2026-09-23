@@ -26,6 +26,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Iterable
 
     import mcp.types as mcp_types
+    from fastmcp.tools import ToolResult
 
 
 class RemoteApiKeyMiddleware(Middleware):
@@ -44,7 +45,7 @@ class RemoteApiKeyMiddleware(Middleware):
         self,
         context: MiddlewareContext[mcp_types.CallToolRequestParams],
         call_next: CallNext[mcp_types.CallToolRequestParams, object],
-    ) -> object:
+    ) -> ToolResult:
         """Inject request-scoped AYON client based on ``x-api-key`` header.
 
         Args:
@@ -71,7 +72,7 @@ class RemoteApiKeyMiddleware(Middleware):
 
         set_global_ayon_api_key(request_api_key)
         set_global_ayon_client(get_ayon_api(self._base_url, request_api_key))
-        return await call_next(context)
+        return await call_next(context)  # ty: ignore[invalid-return-type]
 
 
 class StaticApiKeyMiddleware(Middleware):
@@ -93,15 +94,24 @@ class StaticApiKeyMiddleware(Middleware):
         self,
         context: MiddlewareContext[mcp_types.CallToolRequestParams],
         call_next: CallNext[mcp_types.CallToolRequestParams, object],
-    ) -> object:
-        """Inject a lazily initialized AYON client for local mode."""
+    ) -> ToolResult:
+        """Inject a lazily initialized AYON client for local mode.
+
+        Args:
+            context: The middleware context for the current request.
+            call_next: The next middleware or tool handler to call.
+
+        Returns:
+            The result of the next middleware or tool handler.
+
+        """
         from .client import set_global_ayon_api_key
 
         if self._client is None:
             self._client = get_ayon_api(self._base_url, self._api_key)
         set_global_ayon_api_key(self._api_key)
         set_global_ayon_client(self._client)
-        return await call_next(context)
+        return await call_next(context)  # ty: ignore[invalid-return-type]
 
 
 def register_tools(server: FastMCP, tools: Iterable[Callable]) -> None:
@@ -144,15 +154,6 @@ def create_mcp_server(base_url: str, api_key: str) -> FastMCP:
             # Cleanup on shutdown
             await client.close()
             set_global_rest_client(None)
-
-    # mcp = FastMCP.from_openapi(
-    #     openapi_spec=openapi_spec,
-    #     validate_output=False,
-    #     client=client,
-    #     name="AYON MCP Server",
-    #     instructions=INSTRUCTIONS,
-    #     route_maps=semantic_maps
-    # )
 
     from . import tools as tools_module
 

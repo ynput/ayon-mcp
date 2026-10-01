@@ -171,6 +171,33 @@ class TestCreateMcpServer:
             getattr(function, "__name__", "") for function in ALL_TOOLS
         }
 
+    @pytest.mark.parametrize(
+        "otel_enabled", [None, "false", "TRUE", "true"]
+    )
+    def test_token_metrics_are_opt_in(self, monkeypatch, otel_enabled):
+        from ayon_mcp import server as server_module
+
+        mock_server = MagicMock()
+        monkeypatch.setattr(
+            server_module,
+            "create_mcp_server",
+            MagicMock(return_value=mock_server),
+        )
+        if otel_enabled is None:
+            monkeypatch.delenv("AYON_MCP_OTEL_ENABLED", raising=False)
+        else:
+            monkeypatch.setenv("AYON_MCP_OTEL_ENABLED", otel_enabled)
+
+        server_module.run_remote("http://localhost:5000", "api-key")
+
+        middleware_types = [
+            type(call.args[0])
+            for call in mock_server.add_middleware.call_args_list
+        ]
+        assert (server_module.TokenMetrics in middleware_types) is (
+            otel_enabled == "true"
+        )
+
 
 # ---------------------------------------------------------------------------
 # tools/projects

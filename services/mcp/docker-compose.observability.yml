@@ -1,5 +1,7 @@
 services:
   ayon-mcp:
+    environment:
+      AYON_MCP_OTEL_ENABLED: "true"
     networks:
       - default
       - ayon-observability

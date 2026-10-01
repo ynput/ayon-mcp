@@ -12,17 +12,18 @@ version = "0.0.1"
 # - do not specify if there is no client code
 client_dir = None
 
+services_version = version
 
 services = {
     "mcp": {
-        "image": "ynput/ayon-mcp:dev",
-        "environment": {
-            "OTEL_METRIC_EXPORT_INTERVAL": "5000",
-            "OTEL_EXPORTER_OTLP_ENDPOINT": "http://ayon-vector:4317",
-            "OTEL_EXPORTER_OTLP_PROTOCOL": "grpc",
-            "OTEL_EXPORTER_OTLP_INSECURE": "true",
-            "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT": "http://ayon-tempo:4317"
-        }
+        f"image": "ynput/ayon-mcp:{services_version}",
+        # "environment": {
+        #     "OTEL_METRIC_EXPORT_INTERVAL": "5000",
+        #     "OTEL_EXPORTER_OTLP_ENDPOINT": "http://ayon-vector:4317",
+        #     "OTEL_EXPORTER_OTLP_PROTOCOL": "grpc",
+        #     "OTEL_EXPORTER_OTLP_INSECURE": "true",
+        #     "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT": "http://ayon-tempo:4317"
+        #}
     },
 }
 

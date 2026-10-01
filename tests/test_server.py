@@ -2,19 +2,17 @@
 from __future__ import annotations
 
 import os
-import pytest
 from contextlib import AsyncExitStack
-from mcp import ClientSession, StdioServerParameters
-from mcp.client.stdio import stdio_client
-
 from unittest.mock import MagicMock
 
 import pytest
-
+from mcp import ClientSession, StdioServerParameters
+from mcp.client.stdio import stdio_client
 
 # ---------------------------------------------------------------------------
 # utils
 # ---------------------------------------------------------------------------
+
 
 class TestCollect:
     def test_returns_all_items_when_under_limit(self):
@@ -33,7 +31,7 @@ class TestCollect:
         assert len(result["items"]) == 3
 
     def test_clamps_limit_to_max(self):
-        from ayon_mcp.utils import collect, MAX_LIMIT
+        from ayon_mcp.utils import MAX_LIMIT, collect
 
         items = list(range(MAX_LIMIT + 10))
         result = collect(iter(items), limit=MAX_LIMIT + 100)
@@ -93,7 +91,10 @@ class TestGlobalClient:
         copy_context().run(_run)
 
     def test_returns_set_client(self):
-        from ayon_mcp.client import set_global_ayon_client, get_global_ayon_client
+        from ayon_mcp.client import (
+            get_global_ayon_client,
+            set_global_ayon_client,
+        )
 
         fake = MagicMock()
         set_global_ayon_client(fake)
@@ -126,11 +127,11 @@ class TestGlobalClient:
 
 class TestCreateMcpServer:
     def test_returns_fastmcp_instance(self):
-        from fastmcp import FastMCP
         from ayon_mcp.server import create_mcp_server
+        from fastmcp import FastMCP
 
         mcp = create_mcp_server(
-            "http://localhost:5000", 
+            "http://localhost:5000",
             os.getenv("AYON_API_KEY", ""))
         assert isinstance(mcp, FastMCP)
 
@@ -144,6 +145,7 @@ class TestCreateMcpServer:
 
     def test_discovery_tools_are_registered(self):
         import asyncio
+
         from ayon_mcp.server import create_mcp_server
 
         mcp = create_mcp_server("http://localhost:5000", os.getenv("AYON_API_KEY", ""))
@@ -159,6 +161,7 @@ class TestCreateMcpServer:
 
     def test_direct_exposure_mode_preserves_legacy_tools(self, monkeypatch):
         import asyncio
+
         from ayon_mcp.server import create_mcp_server
         from ayon_mcp.tools import ALL_TOOLS
 
@@ -170,6 +173,33 @@ class TestCreateMcpServer:
         assert registered == {
             getattr(function, "__name__", "") for function in ALL_TOOLS
         }
+
+    @pytest.mark.parametrize(
+        "otel_enabled", [None, "false", "TRUE", "true"]
+    )
+    def test_token_metrics_are_opt_in(self, monkeypatch, otel_enabled):
+        from ayon_mcp import server as server_module
+
+        mock_server = MagicMock()
+        monkeypatch.setattr(
+            server_module,
+            "create_mcp_server",
+            MagicMock(return_value=mock_server),
+        )
+        if otel_enabled is None:
+            monkeypatch.delenv("AYON_MCP_OTEL_ENABLED", raising=False)
+        else:
+            monkeypatch.setenv("AYON_MCP_OTEL_ENABLED", otel_enabled)
+
+        server_module.run_remote("http://localhost:5000", "api-key")
+
+        middleware_types = [
+            type(call.args[0])
+            for call in mock_server.add_middleware.call_args_list
+        ]
+        assert (server_module.TokenMetrics in middleware_types) is (
+            otel_enabled == "true"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -351,7 +381,6 @@ class TestCreateEntity:
 
         with pytest.raises(RuntimeError):
             create_entity("demo", "scene", {"name": "x"})
-
 
 
 class TestUpdateEntity:
@@ -807,7 +836,7 @@ class TestListRepresentations:
 
 class TestGetEntity:
     def test_returns_folder_model(self, mock_api):
-        from ayon_mcp.tools.entities import get_entity, Folder
+        from ayon_mcp.tools.entities import Folder, get_entity
 
         mock_api.get_folder_by_id.return_value = {
             "id": "f1",
@@ -826,7 +855,7 @@ class TestGetEntity:
         assert result.name == "shots"
 
     def test_returns_task_model(self, mock_api):
-        from ayon_mcp.tools.entities import get_entity, Task
+        from ayon_mcp.tools.entities import Task, get_entity
 
         mock_api.get_task_by_id.return_value = {
             "id": "t1",
@@ -857,7 +886,7 @@ class TestGetEntity:
             get_entity("demo", "folder", "missing-id")
 
     def test_returns_version_model(self, mock_api):
-        from ayon_mcp.tools.entities import get_entity, Version
+        from ayon_mcp.tools.entities import Version, get_entity
 
         mock_api.get_version_by_id.return_value = {
             "id": "v1",

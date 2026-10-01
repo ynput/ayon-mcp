@@ -211,7 +211,8 @@ def run_remote(base_url: str, api_key: str) -> FastMCP:
         api_key=api_key,
     )
     mcp.add_middleware(RemoteApiKeyMiddleware(base_url))
-    mcp.add_middleware(TokenMetrics())
+    if os.getenv("AYON_MCP_OTEL_ENABLED", "false") == "true":
+        mcp.add_middleware(TokenMetrics())
     mcp.run(
         transport="streamable-http",
         host="0.0.0.0",  # ruff:ignore[hardcoded-bind-all-interfaces]

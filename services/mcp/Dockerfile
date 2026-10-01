@@ -21,6 +21,7 @@ RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --locked --no-dev
 
 ENV PATH="/mcp-service/.venv/bin:$PATH"
+ENV AYON_MCP_OTEL_ENABLED=false
 # Console metric exporter otherwise only flushes every 60s by default
 ENV OTEL_METRIC_EXPORT_INTERVAL=5000
 # Logs/metrics go through Vector's opentelemetry source (grpc)
@@ -32,4 +33,4 @@ ENV OTEL_EXPORTER_OTLP_TRACES_ENDPOINT=$OTEL_EXPORTER_OTLP_TRACES_ENDPOINT
 ENV OTEL_SERVICE_NAME=ayon-mcp-service
 EXPOSE 8088
 
-CMD ["uv", "run", "opentelemetry-instrument", "--traces_exporter", "otlp", "--metrics_exporter", "otlp", "--logs_exporter", "otlp", "python", "-m", "ayon_mcp.app"]
+CMD ["sh", "-c", "if [ \"$AYON_MCP_OTEL_ENABLED\" = \"true\" ]; then exec uv run opentelemetry-instrument --traces_exporter otlp --metrics_exporter otlp --logs_exporter otlp python -m ayon_mcp.app; else exec uv run python -m ayon_mcp.app; fi"]

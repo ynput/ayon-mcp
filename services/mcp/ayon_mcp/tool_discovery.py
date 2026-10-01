@@ -7,11 +7,19 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from chuk_tool_processor.discovery import BaseDynamicToolProvider
+from chuk_tool_processor.guards import ErrorClass, RetrySafetyGuard
 from fastmcp.tools.function_tool import FunctionTool
+
+from .guardrails import build_guard_chain, read_only_enabled
 
 if TYPE_CHECKING:
     from collections.abc import Callable
 
+    from chuk_tool_processor.guards import GuardChain
+
+
+# Sentinel: "build the guard chain from env" vs. an explicit None
+_DEFAULT = object()
 
 MUTATING_TOOL_NAMES = frozenset({
     "add_comment",
@@ -59,6 +67,21 @@ def _requires_confirmation(function: Callable[..., Any]) -> bool:
     )
 
 
+def drop_mutating_tools(
+    functions: list[Callable[..., Any]],
+) -> list[Callable[..., Any]]:
+    """Remove every state-changing tool, for ``AYON_MCP_READ_ONLY`` mode.
+
+    Returns:
+        Only the functions not classified as mutating.
+
+    """
+    return [
+        function for function in functions
+        if not _requires_confirmation(function)
+    ]
+
+
 def create_curated_tools(
     functions: list[Callable[..., Any]],
 ) -> list[AyonTool]:
@@ -88,11 +111,40 @@ def create_curated_tools(
 class AyonDynamicToolProvider(BaseDynamicToolProvider[AyonTool]):
     """Expose AYON tools through chuk's compact discovery protocol."""
 
-    def __init__(self, tools: list[AyonTool]) -> None:
-        """Initialize the provider with its available AYON tools."""
+    def __init__(
+        self,
+        tools: list[AyonTool],
+        guard_chain: GuardChain | object | None = _DEFAULT,
+    ) -> None:
+        """Initialize the provider with its available AYON tools.
+
+        Args:
+            tools: The catalogued AYON tools this provider exposes.
+            guard_chain: Guard chain to run before/after execution.
+                Defaults to the env-configured chain from
+                ``guardrails.build_guard_chain`` (itself ``None`` when
+                ``AYON_MCP_GUARDS=off``). Pass ``None`` explicitly to skip
+                guardrails regardless of env. ``AYON_MCP_READ_ONLY`` is
+                enforced either way.
+
+        """
         super().__init__()
         self._tools = tools
         self._tools_by_name = {tool.name: tool for tool in tools}
+        self._read_only = read_only_enabled()
+        self._guard_chain = (
+            build_guard_chain(tools)
+            if guard_chain is _DEFAULT
+            else guard_chain
+        )
+        retry_guard = (
+            self._guard_chain.get("retry_safety")
+            if self._guard_chain is not None
+            else None
+        )
+        self._retry_guard = (
+            retry_guard if isinstance(retry_guard, RetrySafetyGuard) else None
+        )
 
     async def get_all_tools(self) -> list[AyonTool]:
         """Return every catalogued AYON tool.
@@ -156,6 +208,56 @@ class AyonDynamicToolProvider(BaseDynamicToolProvider[AyonTool]):
         )
         return schema
 
+    def _policy_error(
+        self, tool: AyonTool, *, confirmed: object
+    ) -> str | None:
+        """Return why a mutating call is refused, independent of guards.
+
+        Returns:
+            The refusal message, or ``None`` when the call may proceed.
+
+        """
+        if not tool.requires_confirmation:
+            return None
+        if self._read_only:
+            return (
+                f"Tool '{tool.name}' changes AYON data and is blocked: "
+                "the server runs in read-only mode (AYON_MCP_READ_ONLY)."
+            )
+        if confirmed is not True:
+            return (
+                f"Tool '{tool.name}' changes AYON data. Set "
+                "confirm_mutation=true only after explicit user approval."
+            )
+        return None
+
+    async def _run_tool(
+        self,
+        tool: AyonTool,
+        arguments: dict[str, Any],
+    ) -> tuple[bool, Any]:
+        """Call the tool function, recording the attempt for retry safety.
+
+        Returns:
+            ``(True, result)`` on success, ``(False, error message)`` if the
+            tool raised.
+
+        """
+        try:
+            result = tool.function(**arguments)
+            if inspect.isawaitable(result):
+                result = await result
+        except Exception as exc:  # ruff: ignore[blind-except]
+            if self._retry_guard is not None:
+                self._retry_guard.record_attempt(
+                    tool.name, arguments, ErrorClass.UNKNOWN
+                )
+            return False, str(exc)
+
+        if self._retry_guard is not None:
+            self._retry_guard.record_success(tool.name, arguments)
+        return True, result
+
     async def execute_tool(
         self,
         tool_name: str,
@@ -176,21 +278,29 @@ class AyonDynamicToolProvider(BaseDynamicToolProvider[AyonTool]):
 
         arguments = dict(arguments)
         confirmed = arguments.pop("confirm_mutation", False)
-        if tool.requires_confirmation and confirmed is not True:
-            return {
-                "success": False,
-                "error": (
-                    f"Tool '{tool.name}' changes AYON data. Set "
-                    "confirm_mutation=true only after explicit user approval."
-                ),
-            }
+        policy_error = self._policy_error(tool, confirmed=confirmed)
+        if policy_error is not None:
+            return {"success": False, "error": policy_error}
 
-        try:
-            result = tool.function(**arguments)
-            if inspect.isawaitable(result):
-                result = await result
-        except Exception as exc:  # ruff: ignore[blind-except]
-            return {"success": False, "error": str(exc)}
+        if self._guard_chain is not None:
+            guard_result = await self._guard_chain.check_all_async(
+                tool_name, arguments
+            )
+            if guard_result.blocked:
+                return {"success": False, "error": guard_result.final_reason}
+            if guard_result.repaired_args is not None:
+                arguments = guard_result.repaired_args
+
+        succeeded, result = await self._run_tool(tool, arguments)
+        if not succeeded:
+            return {"success": False, "error": result}
+
+        if self._guard_chain is not None:
+            output_check = self._guard_chain.check_output_all(
+                tool_name, arguments, result
+            )
+            if output_check.blocked:
+                return {"success": False, "error": output_check.final_reason}
 
         return {"success": True, "result": result}
 

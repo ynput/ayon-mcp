@@ -11,7 +11,8 @@ tasks, publishes, the event stream, and addon settings.
 > go through AYON's operations endpoint with real permissions — mistakes can
 > mutate or delete production data. Use a restricted API key, review
 > mutations before confirming, and prefer a non-production server until
-> you've validated the behavior for your workflow.
+> you've validated the behavior for your workflow. A [guard chain](#guardrails)
+> adds defense in depth, but is not a substitute for these precautions.
 
 ## Requirements
 
@@ -169,6 +170,19 @@ for compatibility.
 
 Write tools modify production data through the standard AYON operations
 endpoint, so server-side validation, permissions and events all apply.
+
+### Guardrails
+
+Every call routed through the discovery surface also passes through a
+[chuk-tool-processor](https://pypi.org/project/chuk-tool-processor/) guard
+chain (schema validation, side-effect gating, network policy, sensitive-data
+and output-size checks) before it reaches AYON. See
+[`docs/design/guardrails.md`](docs/design/guardrails.md) for the design.
+
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `AYON_MCP_GUARDS` | `default` | `default` - the standard chain. `strict` - also blocks destructive tools (e.g. `delete_entity`) regardless of `confirm_mutation`, and blocks an identical tool call after it failed 3 times. `off` (or `false`/`0`/`no`) - disables the guard chain entirely. |
+| `AYON_MCP_READ_ONLY` | `false` | When truthy, write/destructive tools are not registered at all (in both discovery and direct exposure mode) and are refused if called. Enforced even with `AYON_MCP_GUARDS=off`. |
 
 ### Generated OpenAPI Tools
 

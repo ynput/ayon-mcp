@@ -171,6 +171,29 @@ class TestCreateMcpServer:
             getattr(function, "__name__", "") for function in ALL_TOOLS
         }
 
+    def test_read_only_mode_does_not_register_mutating_tools(
+        self, monkeypatch
+    ):
+        import asyncio
+        from ayon_mcp.server import create_mcp_server
+
+        monkeypatch.setenv("AYON_MCP_TOOL_EXPOSURE", "direct")
+        monkeypatch.setenv("AYON_MCP_READ_ONLY", "true")
+        mcp = create_mcp_server("http://localhost:5000", os.getenv("AYON_API_KEY", ""))
+
+        registered = {tool.name for tool in asyncio.run(mcp.list_tools())}
+
+        assert "get_project" in registered
+        assert not registered & {
+            "add_comment",
+            "create_entity",
+            "delete_entity",
+            "dispatch_event",
+            "set_addon_settings",
+            "update_entity",
+        }
+        assert "read-only mode" in mcp.instructions
+
 
 # ---------------------------------------------------------------------------
 # tools/projects

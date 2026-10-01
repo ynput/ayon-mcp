@@ -21,7 +21,7 @@ tasks, publishes, the event stream, and addon settings.
 
 ## Configuration
 
-Two environment variables (or the matching CLI flags):
+Environment variables (or the matching CLI flags):
 
 | Variable | Meaning |
 | --- | --- |

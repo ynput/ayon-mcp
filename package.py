@@ -1,3 +1,4 @@
+"""Package configuration for the AYON MCP server addon."""
 # Required: lower case addon name e.g. 'deadline', otherwise addon
 #   will be invalid
 name = "mcp"
@@ -16,14 +17,14 @@ services_version = version
 
 services = {
     "mcp": {
-        f"image": "ynput/ayon-mcp:{services_version}",
+        "image": f"ynput/ayon-mcp:{services_version}",
         # "environment": {
         #     "OTEL_METRIC_EXPORT_INTERVAL": "5000",
         #     "OTEL_EXPORTER_OTLP_ENDPOINT": "http://ayon-vector:4317",
         #     "OTEL_EXPORTER_OTLP_PROTOCOL": "grpc",
         #     "OTEL_EXPORTER_OTLP_INSECURE": "true",
         #     "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT": "http://ayon-tempo:4317"
-        #}
+        # }
     },
 }
 

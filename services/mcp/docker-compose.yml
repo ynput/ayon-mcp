@@ -9,6 +9,7 @@ services:
     environment:
       AYON_SERVER_URL: ${AYON_SERVER_URL:?Set AYON_SERVER_URL in your environment or .env}
       AYON_API_KEY: ${AYON_API_KEY:?Set AYON_API_KEY in your environment or .env}
+      AYON_MCP_OTEL_ENABLED: ${AYON_MCP_OTEL_ENABLED:-false}
     networks:
       - default
       - ayon-observability

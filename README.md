@@ -27,9 +27,14 @@ Two environment variables (or the matching CLI flags):
 | --- | --- |
 | `AYON_SERVER_URL` | e.g. `https://ayon.mystudio.com` or `http://localhost:5000` |
 | `AYON_API_KEY` | API key of the user the assistant acts as |
+| `AYON_MCP_OTEL_ENABLED` | Set to `true` to enable OpenTelemetry (default: `false`) |
 
 The assistant inherits the permissions of that user — use a restricted
 user if you only want read access.
+
+For the Docker service, set `AYON_MCP_OTEL_ENABLED=true` to export traces,
+metrics, and logs to the configured OTLP endpoints. OpenTelemetry is disabled
+by default.
 
 ## Usage
 

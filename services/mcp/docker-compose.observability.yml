@@ -1,0 +1,10 @@
+services:
+  ayon-mcp:
+    networks:
+      - default
+      - ayon-observability
+
+networks:
+  ayon-observability:
+    name: ayon-observability
+    external: true

@@ -12,10 +12,4 @@ services:
       AYON_MCP_OTEL_ENABLED: ${AYON_MCP_OTEL_ENABLED:-false}
     networks:
       - default
-      - ayon-observability
     restart: unless-stopped
-
-networks:
-  ayon-observability:
-    name: ayon-observability
-    external: true

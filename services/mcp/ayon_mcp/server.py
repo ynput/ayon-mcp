@@ -23,7 +23,12 @@ from .instructions import (
 from .metrics import TokenMetrics
 from .openapi_codegen import sync_openapi_tools_from_server
 from .rest_client import RestApiClient, set_global_rest_client
-from .tool_discovery import create_discovery_tools, drop_mutating_tools
+from .rest_policy import admin_tools_enabled
+from .tool_discovery import (
+    create_discovery_tools,
+    drop_admin_tools,
+    drop_mutating_tools,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -184,6 +189,10 @@ def create_mcp_server(base_url: str, api_key: str) -> FastMCP:
     )
 
     tools = list(tools_module.ALL_TOOLS)
+    if not admin_tools_enabled():
+        # Secrets, credentials, user/access management and server lifecycle
+        # endpoints are opt-in - see rest_policy.ADMIN_PATTERNS.
+        tools = drop_admin_tools(tools)
     if read_only_enabled():
         # Not registering mutating tools at all covers direct exposure mode
         # too, where calls never pass through AyonDynamicToolProvider.

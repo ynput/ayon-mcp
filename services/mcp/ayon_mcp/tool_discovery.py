@@ -7,10 +7,19 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from chuk_tool_processor.discovery import BaseDynamicToolProvider
-from chuk_tool_processor.guards import ErrorClass, RetrySafetyGuard
+from chuk_tool_processor.guards import (
+    ErrorClass,
+    RetrySafetyGuard,
+    SideEffectClass,
+)
 from fastmcp.tools.function_tool import FunctionTool
 
-from .guardrails import build_guard_chain, read_only_enabled
+from .guardrails import (
+    DESTRUCTIVE_TOOL_NAMES,
+    build_guard_chain,
+    read_only_enabled,
+)
+from .rest_policy import endpoint_of, is_admin, side_effect_for
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -29,7 +38,6 @@ MUTATING_TOOL_NAMES = frozenset({
     "set_addon_settings",
     "update_entity",
 })
-MUTATING_HTTP_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
 
 
 @dataclass(frozen=True)
@@ -41,7 +49,12 @@ class AyonTool:
     description: str
     parameters: dict[str, Any]
     function: Callable[..., Any]
-    requires_confirmation: bool = False
+    side_effect: SideEffectClass = SideEffectClass.READ_ONLY
+
+    @property
+    def requires_confirmation(self) -> bool:
+        """Whether the tool changes AYON data and needs confirm_mutation."""
+        return self.side_effect is not SideEffectClass.READ_ONLY
 
 
 def _tool_description(function: Callable[..., Any]) -> str:
@@ -57,14 +70,29 @@ def _tool_description(function: Callable[..., Any]) -> str:
     )
 
 
+def tool_side_effect(function: Callable[..., Any]) -> SideEffectClass:
+    """Classify a tool function as read-only, write, or destructive.
+
+    Curated tools are classified by name; generated REST tools by their
+    endpoint, via ``rest_policy``. Anything else is a curated read tool.
+
+    Returns:
+        The tool's ``SideEffectClass``.
+
+    """
+    name = function.__name__
+    if name in DESTRUCTIVE_TOOL_NAMES:
+        return SideEffectClass.DESTRUCTIVE
+    if name in MUTATING_TOOL_NAMES:
+        return SideEffectClass.WRITE
+    endpoint = endpoint_of(function)
+    if endpoint is not None:
+        return side_effect_for(*endpoint)
+    return SideEffectClass.READ_ONLY
+
+
 def _requires_confirmation(function: Callable[..., Any]) -> bool:
-    if function.__name__ in MUTATING_TOOL_NAMES:
-        return True
-    docstring = inspect.getdoc(function) or ""
-    return any(
-        f"Endpoint: {method} " in docstring
-        for method in MUTATING_HTTP_METHODS
-    )
+    return tool_side_effect(function) is not SideEffectClass.READ_ONLY
 
 
 def drop_mutating_tools(
@@ -79,6 +107,22 @@ def drop_mutating_tools(
     return [
         function for function in functions
         if not _requires_confirmation(function)
+    ]
+
+
+def drop_admin_tools(
+    functions: list[Callable[..., Any]],
+) -> list[Callable[..., Any]]:
+    """Remove admin/security REST tools, unless ``AYON_MCP_ADMIN_TOOLS``.
+
+    Returns:
+        Only the functions not calling an admin endpoint.
+
+    """
+    return [
+        function for function in functions
+        if (endpoint := endpoint_of(function)) is None
+        or not is_admin(*endpoint)
     ]
 
 
@@ -102,7 +146,7 @@ def create_curated_tools(
                 description=_tool_description(function),
                 parameters=fastmcp_tool.parameters,
                 function=function,
-                requires_confirmation=_requires_confirmation(function),
+                side_effect=tool_side_effect(function),
             )
         )
     return tools

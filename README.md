@@ -188,6 +188,18 @@ and output-size checks) before it reaches AYON. See
 | --- | --- | --- |
 | `AYON_MCP_GUARDS` | `default` | `default` - the standard chain. `strict` - also blocks destructive tools (e.g. `delete_entity`) regardless of `confirm_mutation`, and blocks an identical tool call after it failed 3 times. `off` (or `false`/`0`/`no`) - disables the guard chain entirely. |
 | `AYON_MCP_READ_ONLY` | `false` | When truthy, write/destructive tools are not registered at all (in both discovery and direct exposure mode) and are refused if called. Enforced even with `AYON_MCP_GUARDS=off`. |
+| `AYON_MCP_ADMIN_TOOLS` | `false` | When truthy, registers generated REST tools for admin/security endpoints (secrets, API keys, auth/sessions, user and access management, `/api/system/*`, services, addon/installer uploads). Hidden by default, reads included. |
+
+Generated REST tools are classified by HTTP method (`GET` read-only,
+`POST`/`PUT`/`PATCH` write, `DELETE` destructive), with a reviewed override
+table for endpoints where the method doesn't match the effect (e.g.
+`POST /api/query` is read-only, `POST /api/system/restart` is destructive).
+Both the overrides and the admin endpoint patterns live in
+[`services/mcp/ayon_mcp/rest_policy.py`](services/mcp/ayon_mcp/rest_policy.py).
+When the AYON server adds endpoints,
+`services/mcp/scripts/suggest_rest_policy.py` can ask a local Ollama model
+for classification suggestions to review - its output is never used at
+runtime.
 
 ### Generated OpenAPI Tools
 

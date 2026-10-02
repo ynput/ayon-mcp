@@ -114,25 +114,17 @@ def read_only_enabled() -> bool:
 def classify_side_effects(
     tools: list[AyonTool],
 ) -> dict[str, SideEffectClass]:
-    """Classify each tool as read-only, write, or destructive.
+    """Map each tool to its read-only / write / destructive classification.
 
-    Reuses the mutation heuristic already computed on each ``AyonTool``
-    (``requires_confirmation``, from ``MUTATING_TOOL_NAMES``/HTTP-method
-    docstring detection in ``tool_discovery.py``) rather than duplicating it.
+    The classification itself is computed once per tool in
+    ``tool_discovery.tool_side_effect`` (curated tools by name, generated
+    REST tools via ``rest_policy``).
 
     Returns:
         A mapping of tool name to its ``SideEffectClass``.
 
     """
-    classifications: dict[str, SideEffectClass] = {}
-    for tool in tools:
-        if tool.name in DESTRUCTIVE_TOOL_NAMES:
-            classifications[tool.name] = SideEffectClass.DESTRUCTIVE
-        elif tool.requires_confirmation:
-            classifications[tool.name] = SideEffectClass.WRITE
-        else:
-            classifications[tool.name] = SideEffectClass.READ_ONLY
-    return classifications
+    return {tool.name: tool.side_effect for tool in tools}
 
 
 def _ayon_server_hostname() -> str | None:

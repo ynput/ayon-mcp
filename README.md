@@ -50,6 +50,36 @@ Once done, service will start and you can add MCP server as remote server. See e
 > Right now, the ash responsible for running services is not exposing the ports.
 > You need this PR
 
+### Through the AYON server (tunnel mode, experimental)
+
+Requires an AYON server with the MCP tunnel endpoints (`/api/mcp`).
+
+Set `AYON_MCP_TRANSPORT=tunnel` on the service (or run `ayon-mcp --tunnel`). The service
+then opens no port. It connects out to the AYON server over a WebSocket (`/api/mcp/ws`),
+and MCP clients use the AYON server itself:
+
+```
+https://<ayon-server>/api/mcp
+```
+
+The service needs no public IP, port mapping or ingress, which helps in cloud and Kubernetes
+deployments. The server forwards plain HTTP through the tunnel and streams responses back
+chunk by chunk, so SSE responses (progress notifications) are not buffered.
+
+- Clients authenticate against AYON as usual (`x-api-key` or `Authorization` header).
+  Unauthenticated requests never reach the service, and neither do the caller's credentials:
+  the server passes only the authenticated user name. The service calls AYON with its own
+  `AYON_API_KEY` and `x-as-user: <user>`, so the caller's permissions apply.
+- `AYON_API_KEY` must belong to a service user. Only service users can open the tunnel.
+- The tunnel URL is `AYON_SERVER_URL` + `/api/mcp/ws`. Override it with `AYON_MCP_TUNNEL_URL`.
+- The MCP app runs stateless, so several service replicas can connect at once.
+  The server prefers a tunnel held by the worker serving the request and otherwise routes
+  through Redis to the worker holding one, so any number of server workers and replicas work.
+- If the service can't open the tunnel it logs why once and keeps retrying every ~30 s:
+  wrong or non-service `AYON_API_KEY`, a tunnel protocol version mismatch between service
+  and server, or an AYON server without `/api/mcp` (use `AYON_MCP_TRANSPORT=http` there).
+- Current limitation: no per-stream flow control.
+
 ## VSCode (and derivates)
 You can manually configure MCP servers by editing the `mcp.json` file. There are two locations for this file:
 

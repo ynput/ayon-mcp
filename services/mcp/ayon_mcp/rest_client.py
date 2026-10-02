@@ -6,7 +6,7 @@ from typing import Any
 
 import httpx
 
-from .client import get_global_ayon_api_key
+from .client import get_global_ayon_api_key, get_global_ayon_as_user
 
 _REST_CLIENT: RestApiClient | None = None
 
@@ -53,6 +53,8 @@ class RestApiClient:
         request_headers = dict(headers or {})
         if "x-api-key" not in request_headers:
             request_headers["x-api-key"] = get_global_ayon_api_key()
+        if (as_user := get_global_ayon_as_user()) is not None:
+            request_headers.setdefault("x-as-user", as_user)
 
         response = await self.http_client.request(
             method=method.upper(),

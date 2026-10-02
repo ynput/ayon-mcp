@@ -7,6 +7,7 @@ import click
 
 from .server import run_local as run_local_server
 from .server import run_remote as run_remote_server
+from .server import run_tunnel as run_tunnel_server
 
 # define env var names for server URL and API key
 HOST_ENV_VAR = "AYON_SERVER_URL"
@@ -21,6 +22,13 @@ DEFAULT_PORT = 5000
     "--remote", "-r",
     is_flag=True,
     help="Run the server in remote mode (as a service).")
+@click.option(
+    "--tunnel", "-t",
+    is_flag=True,
+    help=(
+        "Run as a service reached through the AYON server's /api/mcp "
+        "(connects out over a WebSocket, opens no port)."
+    ))
 @click.option(
     "--host", "-h",
     default=DEFAULT_HOST,
@@ -43,7 +51,8 @@ def main(
     port: int | None,
     api_key: str | None,
     *,
-    remote: bool = False) -> None:
+    remote: bool = False,
+    tunnel: bool = False) -> None:
     """Run the MCP server.
 
     Args:
@@ -51,6 +60,7 @@ def main(
         port: AYON server port (default 5000)
         api_key: AYON API key (or set AYON_API_KEY)
         remote: Run the server in remote mode (as a service).
+        tunnel: Run as a service behind the AYON server's MCP tunnel.
 
     Raises:
         click.UsageError: If required arguments are missing or invalid.
@@ -75,6 +85,10 @@ def main(
                 "Set the AYON_API_KEY environment variable "
                 "or pass it as --api-key.")
             raise click.UsageError(msg)
+
+    if tunnel:
+        run_tunnel_server(server_url, api_key)
+        return
 
     if remote:
         run_remote_server(server_url, api_key)

@@ -2469,7 +2469,7 @@
           },
           "createdAt": {
             "deprecated": false,
-            "example": "2026-09-03T15:21:12.180202",
+            "example": "2026-10-02T16:38:23.452394",
             "format": "date-time",
             "title": "Createdat",
             "type": "string"
@@ -3470,6 +3470,8 @@
           },
           "code": {
             "deprecated": false,
+            "example": "prj",
+            "pattern": "^[a-zA-Z0-9_]*$",
             "title": "Project code",
             "type": "string"
           },
@@ -3493,7 +3495,9 @@
           },
           "name": {
             "deprecated": false,
-            "example": "Example project",
+            "example": "example_project",
+            "minLength": 1,
+            "pattern": "^[a-zA-Z0-9_]*$",
             "title": "Project name",
             "type": "string"
           },
@@ -4182,7 +4186,7 @@
           "entityId": {
             "deprecated": false,
             "description": "ID of the entity in the list",
-            "example": "19369908a7ab11f1b4501e40c22760a4",
+            "example": "af6a0bd6be7f11f18d19920f3bcb23c4",
             "title": "Entity ID",
             "type": "string"
           },
@@ -4195,7 +4199,7 @@
           },
           "id": {
             "deprecated": false,
-            "example": "193697a0a7ab11f1b4501e40c22760a4",
+            "example": "af6a0b5ebe7f11f18d19920f3bcb23c4",
             "title": "Item ID",
             "type": "string"
           },
@@ -4261,7 +4265,7 @@
           "entityId": {
             "deprecated": false,
             "description": "ID of the entity in the list",
-            "example": "19369908a7ab11f1b4501e40c22760a4",
+            "example": "af6a0bd6be7f11f18d19920f3bcb23c4",
             "title": "Entity ID",
             "type": "string"
           },
@@ -4310,13 +4314,13 @@
           "entityId": {
             "deprecated": false,
             "description": "ID of the entity in the list",
-            "example": "19369908a7ab11f1b4501e40c22760a4",
+            "example": "af6a0bd6be7f11f18d19920f3bcb23c4",
             "title": "Entity ID",
             "type": "string"
           },
           "id": {
             "deprecated": false,
-            "example": "193697a0a7ab11f1b4501e40c22760a4",
+            "example": "af6a0b5ebe7f11f18d19920f3bcb23c4",
             "title": "Item ID",
             "type": "string"
           },
@@ -4437,7 +4441,7 @@
           },
           "id": {
             "deprecated": false,
-            "example": "19368be8a7ab11f1b4501e40c22760a4",
+            "example": "af6a07b2be7f11f18d19920f3bcb23c4",
             "title": "ID",
             "type": "string"
           },
@@ -4520,13 +4524,13 @@
           "entityId": {
             "deprecated": false,
             "description": "ID of the entity in the list",
-            "example": "19369908a7ab11f1b4501e40c22760a4",
+            "example": "af6a0bd6be7f11f18d19920f3bcb23c4",
             "title": "Entity ID",
             "type": "string"
           },
           "id": {
             "deprecated": false,
-            "example": "193697a0a7ab11f1b4501e40c22760a4",
+            "example": "af6a0b5ebe7f11f18d19920f3bcb23c4",
             "title": "Item ID",
             "type": "string"
           },
@@ -4723,7 +4727,7 @@
           },
           "id": {
             "deprecated": false,
-            "example": "19368be8a7ab11f1b4501e40c22760a4",
+            "example": "af6a07b2be7f11f18d19920f3bcb23c4",
             "title": "ID",
             "type": "string"
           },
@@ -4814,7 +4818,7 @@
           },
           "id": {
             "deprecated": false,
-            "example": "19368be8a7ab11f1b4501e40c22760a4",
+            "example": "af6a07b2be7f11f18d19920f3bcb23c4",
             "title": "ID",
             "type": "string"
           },
@@ -4869,8 +4873,20 @@
         "type": "object"
       },
       "EnumItem": {
-        "description": "Attribute enum item.",
+        "description": "Attribute enum item.\n\nLives under `ayon_server.models` (rather than `ayon_server.enum`, which\nis where it's re-exported from) because `ayon_server.forms` also needs\nit for select/multiselect options, and `ayon_server.enum` itself\ndepends on `ayon_server.forms` - keeping the model in a dependency-free\nleaf module avoids a cycle between the two.",
         "properties": {
+          "badges": {
+            "deprecated": false,
+            "description": "Extra badge labels to display next to the item",
+            "example": [
+              "beta"
+            ],
+            "items": {
+              "type": "string"
+            },
+            "title": "Badges",
+            "type": "array"
+          },
           "color": {
             "deprecated": false,
             "example": "#FF0000",
@@ -5005,6 +5021,20 @@
             "title": "Accepted parameters",
             "type": "object"
           },
+          "description": {
+            "deprecated": false,
+            "description": "Optional human-readable description for the resolver",
+            "example": "List of available statuses for tasks",
+            "title": "Resolver description",
+            "type": "string"
+          },
+          "label": {
+            "deprecated": false,
+            "description": "Optional human-readable label for the resolver",
+            "example": "Statuses",
+            "title": "Resolver label",
+            "type": "string"
+          },
           "name": {
             "deprecated": false,
             "example": "statuses",
@@ -5023,6 +5053,7 @@
         },
         "required": [
           "name",
+          "label",
           "acceptedParams"
         ],
         "title": "EnumResolverInfo",
@@ -5416,6 +5447,11 @@
       "FolderListItem": {
         "description": "Base API model.",
         "properties": {
+          "active": {
+            "default": true,
+            "title": "Active",
+            "type": "boolean"
+          },
           "attrib": {
             "title": "Attrib",
             "type": "object"
@@ -5423,6 +5459,10 @@
           "createdAt": {
             "format": "date-time",
             "title": "Createdat",
+            "type": "string"
+          },
+          "createdBy": {
+            "title": "Createdby",
             "type": "string"
           },
           "folderType": {
@@ -5504,6 +5544,15 @@
             "format": "date-time",
             "title": "Updatedat",
             "type": "string"
+          },
+          "updatedBy": {
+            "title": "Updatedby",
+            "type": "string"
+          },
+          "visible": {
+            "default": true,
+            "title": "Visible",
+            "type": "boolean"
           }
         },
         "required": [
@@ -6018,6 +6067,109 @@
         "title": "FolderType",
         "type": "object"
       },
+      "FormFieldPatch": {
+        "properties": {
+          "disabled": {
+            "title": "Disabled",
+            "type": "boolean"
+          },
+          "enumResolver": {
+            "title": "Enumresolver",
+            "type": "string"
+          },
+          "enumResolverParams": {
+            "title": "Enumresolverparams",
+            "type": "object"
+          },
+          "hidden": {
+            "title": "Hidden",
+            "type": "boolean"
+          },
+          "highlight": {
+            "enum": [
+              "info",
+              "warning",
+              "error"
+            ],
+            "title": "Highlight",
+            "type": "string"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "options": {
+            "items": {
+              "$ref": "#/components/schemas/FormOptionItem"
+            },
+            "title": "Options",
+            "type": "array"
+          },
+          "placeholder": {
+            "title": "Placeholder"
+          },
+          "readOnly": {
+            "title": "Readonly",
+            "type": "boolean"
+          },
+          "value": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "integer"
+              },
+              {
+                "type": "number"
+              },
+              {
+                "type": "boolean"
+              },
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "items": {
+                  "type": "integer"
+                },
+                "type": "array"
+              },
+              {
+                "items": {
+                  "type": "number"
+                },
+                "type": "array"
+              },
+              {
+                "$ref": "#/components/schemas/FormFileData"
+              }
+            ],
+            "title": "Value"
+          }
+        },
+        "title": "FormFieldPatch",
+        "type": "object"
+      },
+      "FormFieldRule": {
+        "properties": {
+          "set": {
+            "$ref": "#/components/schemas/FormFieldPatch"
+          },
+          "when": {
+            "$ref": "#/components/schemas/QueryFilter"
+          }
+        },
+        "required": [
+          "when",
+          "set"
+        ],
+        "title": "FormFieldRule",
+        "type": "object"
+      },
       "FormFileData": {
         "properties": {
           "download": {
@@ -6040,7 +6192,7 @@
         "title": "FormFileData",
         "type": "object"
       },
-      "FormSelectOption": {
+      "FormOptionItem": {
         "properties": {
           "badges": {
             "items": {
@@ -6053,24 +6205,67 @@
             "title": "Color",
             "type": "string"
           },
-          "icon": {
-            "title": "Icon",
+          "description": {
+            "title": "Description",
             "type": "string"
+          },
+          "disabled": {
+            "title": "Disabled",
+            "type": "boolean"
+          },
+          "disabledMessage": {
+            "title": "Disabledmessage",
+            "type": "string"
+          },
+          "group": {
+            "title": "Group",
+            "type": "string"
+          },
+          "hidden": {
+            "title": "Hidden",
+            "type": "boolean"
+          },
+          "icon": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "$ref": "#/components/schemas/IconModel"
+              }
+            ],
+            "title": "Icon"
           },
           "label": {
             "title": "Label",
             "type": "string"
           },
-          "value": {
-            "title": "Value",
+          "shortName": {
+            "title": "Shortname",
             "type": "string"
+          },
+          "value": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "integer"
+              },
+              {
+                "type": "number"
+              },
+              {
+                "type": "boolean"
+              }
+            ],
+            "title": "Value"
           }
         },
         "required": [
-          "value",
-          "label"
+          "value"
         ],
-        "title": "FormSelectOption",
+        "title": "FormOptionItem",
         "type": "object"
       },
       "FrontendModuleListItem": {
@@ -6801,7 +6996,7 @@
           },
           "lastSeen": {
             "deprecated": false,
-            "example": "2026-09-03T15:21:20.088387",
+            "example": "2026-10-02T16:38:27.740556",
             "format": "date-time",
             "title": "Last seen time",
             "type": "string"
@@ -7878,12 +8073,12 @@
               {
                 "active": true,
                 "code": "ex",
-                "createdAt": "2026-09-03T15:21:18.385199",
+                "createdAt": "2026-10-02T16:38:26.937992",
                 "library": false,
                 "name": "Example project",
                 "pinned": false,
                 "skeleton": false,
-                "updatedAt": "2026-09-03T15:21:18.385203"
+                "updatedAt": "2026-10-02T16:38:26.937995"
               }
             ],
             "items": {
@@ -8047,16 +8242,34 @@
         "title": "LookupResponseModel",
         "type": "object"
       },
+      "ManageInboxItemFilter": {
+        "description": "Base API model.",
+        "properties": {
+          "active": {
+            "deprecated": false,
+            "description": "Filter by the active flag when provided",
+            "title": "Active",
+            "type": "boolean"
+          },
+          "important": {
+            "deprecated": false,
+            "description": "Filter by whether the item belongs to the Important split",
+            "title": "Important",
+            "type": "boolean"
+          },
+          "read": {
+            "deprecated": false,
+            "description": "Filter by read state when provided",
+            "title": "Read",
+            "type": "boolean"
+          }
+        },
+        "title": "ManageInboxItemFilter",
+        "type": "object"
+      },
       "ManageInboxItemRequest": {
         "description": "Base API model.",
         "properties": {
-          "all": {
-            "default": false,
-            "deprecated": false,
-            "description": "If true, all items will be managed",
-            "title": "All",
-            "type": "boolean"
-          },
           "ids": {
             "deprecated": false,
             "description": "List of reference_ids of items to be managed",
@@ -8065,6 +8278,16 @@
             },
             "title": "List of items",
             "type": "array"
+          },
+          "itemFilter": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/ManageInboxItemFilter"
+              }
+            ],
+            "deprecated": false,
+            "description": "Optional filter selecting which inbox items should be updated",
+            "title": "Item filter"
           },
           "projectName": {
             "deprecated": false,
@@ -8244,7 +8467,7 @@
           },
           "version": {
             "deprecated": false,
-            "example": "1.16.5+DEVELOP",
+            "example": "1.16.8+DEVELOP",
             "title": "Ayon version",
             "type": "string"
           }
@@ -8617,6 +8840,11 @@
             "title": "Env",
             "type": "object"
           },
+          "error": {
+            "deprecated": false,
+            "title": "Error",
+            "type": "string"
+          },
           "hostname": {
             "deprecated": false,
             "title": "Hostname",
@@ -8638,6 +8866,9 @@
             },
             "title": "Ports",
             "type": "array"
+          },
+          "registryAuth": {
+            "$ref": "#/components/schemas/RegistryAuth"
           },
           "shouldRun": {
             "deprecated": false,
@@ -10388,6 +10619,7 @@
             "enum": [
               "eq",
               "like",
+              "re",
               "lt",
               "gt",
               "lte",
@@ -10535,6 +10767,25 @@
           "entity"
         ],
         "title": "QueryRequestModel",
+        "type": "object"
+      },
+      "RegistryAuth": {
+        "description": "Base API model.",
+        "properties": {
+          "password": {
+            "title": "Password",
+            "type": "string"
+          },
+          "username": {
+            "title": "Username",
+            "type": "string"
+          }
+        },
+        "required": [
+          "username",
+          "password"
+        ],
+        "title": "RegistryAuth",
         "type": "object"
       },
       "ReleaseInfo": {
@@ -10979,6 +11230,10 @@
               }
             ],
             "title": "Representation attributes"
+          },
+          "belongsToHero": {
+            "title": "Belongs to HERO version",
+            "type": "boolean"
           },
           "createdAt": {
             "description": "Time of creation",
@@ -11835,6 +12090,9 @@
             "title": "Ports",
             "type": "array"
           },
+          "registryAuth": {
+            "$ref": "#/components/schemas/RegistryAuth"
+          },
           "storagePath": {
             "deprecated": false,
             "example": "/mnt/storage",
@@ -11870,6 +12128,12 @@
             "title": "Env",
             "type": "object"
           },
+          "error": {
+            "deprecated": false,
+            "example": "Failed to start service",
+            "title": "Error",
+            "type": "string"
+          },
           "image": {
             "deprecated": false,
             "example": "ayon/ftrack-addon-leecher:2.0.0",
@@ -11892,6 +12156,9 @@
             },
             "title": "Ports",
             "type": "array"
+          },
+          "registryAuth": {
+            "$ref": "#/components/schemas/RegistryAuth"
           },
           "storagePath": {
             "deprecated": false,
@@ -12106,7 +12373,7 @@
         "properties": {
           "viewId": {
             "deprecated": false,
-            "example": "1f887ac4a7ab11f1b4501e40c22760a4",
+            "example": "b2c458febe7f11f18d19920f3bcb23c4",
             "pattern": "^[0-9a-f]{32}$",
             "title": "View ID",
             "type": "string"
@@ -12208,6 +12475,22 @@
       },
       "SimpleFormField": {
         "properties": {
+          "disabled": {
+            "title": "Disabled",
+            "type": "boolean"
+          },
+          "enumResolver": {
+            "title": "Enumresolver",
+            "type": "string"
+          },
+          "enumResolverParams": {
+            "title": "Enumresolverparams",
+            "type": "object"
+          },
+          "hidden": {
+            "title": "Hidden",
+            "type": "boolean"
+          },
           "highlight": {
             "enum": [
               "info",
@@ -12253,7 +12536,7 @@
           },
           "options": {
             "items": {
-              "$ref": "#/components/schemas/FormSelectOption"
+              "$ref": "#/components/schemas/FormOptionItem"
             },
             "title": "Options",
             "type": "array"
@@ -12261,9 +12544,20 @@
           "placeholder": {
             "title": "Placeholder"
           },
+          "readOnly": {
+            "title": "Readonly",
+            "type": "boolean"
+          },
           "regex": {
             "title": "Regex",
             "type": "string"
+          },
+          "rules": {
+            "items": {
+              "$ref": "#/components/schemas/FormFieldRule"
+            },
+            "title": "Rules",
+            "type": "array"
           },
           "syntax": {
             "title": "Syntax",
@@ -15986,7 +16280,7 @@
   "info": {
     "description": "Open VFX and Animation pipeline server",
     "title": "Ayon server",
-    "version": "1.16.5"
+    "version": "1.16.8"
   },
   "openapi": "3.1.0",
   "paths": {
@@ -32273,7 +32567,7 @@
             }
           },
           {
-            "example": "1f88846aa7ab11f1b4501e40c22760a4",
+            "example": "b2c45d9abe7f11f18d19920f3bcb23c4",
             "in": "path",
             "name": "view_id",
             "required": true,
@@ -32336,7 +32630,7 @@
             }
           },
           {
-            "example": "1f88846aa7ab11f1b4501e40c22760a4",
+            "example": "b2c45d9abe7f11f18d19920f3bcb23c4",
             "in": "path",
             "name": "view_id",
             "required": true,
@@ -32401,7 +32695,7 @@
             }
           },
           {
-            "example": "1f88846aa7ab11f1b4501e40c22760a4",
+            "example": "b2c45d9abe7f11f18d19920f3bcb23c4",
             "in": "path",
             "name": "view_id",
             "required": true,

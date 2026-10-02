@@ -7,7 +7,7 @@ name = "mcp"
 title = "AYON MCP server"
 
 # Required: Valid semantic version (https://semver.org/)
-version = "0.0.1"
+version = "0.1.0"
 
 # Name of client code directory imported in AYON launcher
 # - do not specify if there is no client code
@@ -18,7 +18,9 @@ services_version = version
 services = {
     "mcp": {
         "image": f"ynput/ayon-mcp:{services_version}",
-        # "environment": {
+        "environment": {
+            "AYON_MCP_TRANSPORT": "tunnel",
+        },
         #     "OTEL_METRIC_EXPORT_INTERVAL": "5000",
         #     "OTEL_EXPORTER_OTLP_ENDPOINT": "http://ayon-vector:4317",
         #     "OTEL_EXPORTER_OTLP_PROTOCOL": "grpc",

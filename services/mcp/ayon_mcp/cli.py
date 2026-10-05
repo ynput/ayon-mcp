@@ -26,8 +26,8 @@ DEFAULT_PORT = 5000
     "--tunnel", "-t",
     is_flag=True,
     help=(
-        "Run as a service reached through the AYON server's /api/mcp "
-        "(connects out over a WebSocket, opens no port)."
+        "Run as a service reached through the MCP addon on the AYON "
+        "server (connects out over a WebSocket, opens no port)."
     ))
 @click.option(
     "--host", "-h",

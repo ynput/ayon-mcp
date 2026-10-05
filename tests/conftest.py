@@ -14,6 +14,9 @@ import pytest
 
 # Make `ayon_mcp` importable from the services sub-project.
 sys.path.insert(0, str(Path(__file__).parent.parent / "services" / "mcp"))
+# Make the addon's tunnel code (`mcp_tunnel`) importable without importing
+# the addon itself, which needs the AYON server.
+sys.path.append(str(Path(__file__).parent.parent / "server"))
 dotenv.load_dotenv(dotenv.find_dotenv(), override=True)
 
 

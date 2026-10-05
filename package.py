@@ -15,18 +15,28 @@ client_dir = None
 
 services_version = version
 
+# NOTE: AYON ignores anything here except "image" - environment
+#   for a service is set on the service itself (Services page,
+#   or the service API's "config.env"). Under ASH the service
+#   defaults to tunnel mode on its own (AYON_MCP_TRANSPORT).
+#   This is fixed by https://github.com/ynput/ayon-backend/pull/1162
+
+# You can enable OTEL (OpenTelemetry) for the service by configuring 
+# the environment variables below.
+# "OTEL_METRIC_EXPORT_INTERVAL": "5000",
+# "OTEL_EXPORTER_OTLP_ENDPOINT": "http://ayon-vector:4317",
+# "OTEL_EXPORTER_OTLP_PROTOCOL": "grpc",
+# "OTEL_EXPORTER_OTLP_INSECURE": "true",
+# "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT": "http://ayon-tempo:4317"
+# (modify endpoint URLs as needed)
+
 services = {
     "mcp": {
         "image": f"ynput/ayon-mcp:{services_version}",
+        
         "environment": {
-            "AYON_MCP_TRANSPORT": "tunnel",
-        },
-        #     "OTEL_METRIC_EXPORT_INTERVAL": "5000",
-        #     "OTEL_EXPORTER_OTLP_ENDPOINT": "http://ayon-vector:4317",
-        #     "OTEL_EXPORTER_OTLP_PROTOCOL": "grpc",
-        #     "OTEL_EXPORTER_OTLP_INSECURE": "true",
-        #     "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT": "http://ayon-tempo:4317"
-        # }
+            "AYON_MCP_TRANSPORT": "tunnel"
+        }
     },
 }
 

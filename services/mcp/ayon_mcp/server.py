@@ -147,7 +147,8 @@ class ServiceUserMiddleware(Middleware):
         if not user_name:
             msg = (
                 f"Missing '{USER_HEADER}' header. In tunnel mode requests "
-                "must come through the AYON server's /api/mcp endpoint."
+                "must come through the MCP addon's endpoint on the AYON "
+                "server."
             )
             raise RuntimeError(msg)
 
@@ -306,9 +307,11 @@ def create_remote_server(
 def run_tunnel(base_url: str, api_key: str) -> FastMCP:
     """Serve the MCP server through a WebSocket tunnel to the AYON server.
 
-    The service connects out to the AYON server (``/api/mcp/ws``), which
-    exposes the MCP endpoint at ``/api/mcp``. No port is
-    opened, so no ingress or public IP is needed.
+    The service connects out to the MCP addon on the AYON server
+    (``/api/addons/mcp/{version}/ws``, see ``resolve_tunnel_url``), which
+    exposes the MCP endpoint at ``/api/addons/mcp/{version}/mcp``; the
+    server's ``/api/mcp`` redirects there for the production version.
+    No port is opened, so no ingress or public IP is needed.
 
     The HTTP app runs stateless, so any request can be served by any
     service replica and no MCP session state has to survive reconnects.
@@ -325,13 +328,18 @@ def run_tunnel(base_url: str, api_key: str) -> FastMCP:
         FastMCP instance, once the tunnel loop stops.
 
     """
-    from .tunnel import serve_forever, tunnel_url
+    from .tunnel import resolve_tunnel_url, serve_forever
 
     mcp = create_remote_server(
         base_url, api_key, auth=ServiceUserMiddleware(base_url, api_key)
     )
     app = mcp.http_app(path="/mcp", stateless_http=True)
-    asyncio.run(serve_forever(app, tunnel_url(base_url), api_key))
+
+    async def serve() -> None:
+        url = await resolve_tunnel_url(base_url, api_key)
+        await serve_forever(app, url, api_key)
+
+    asyncio.run(serve())
     return mcp
 
 

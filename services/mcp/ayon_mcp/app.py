@@ -2,17 +2,21 @@
 
 ``AYON_MCP_TRANSPORT`` selects how the service is reached:
 
-- ``http`` (default): listen on ``AYON_MCP_PORT`` (8088).
-- ``tunnel``: connect out to the AYON server and serve its ``/api/mcp``
-  endpoint (needs an AYON server with the MCP tunnel).
+- ``http``: listen on ``AYON_MCP_PORT`` (8088).
+- ``tunnel``: connect out to the MCP addon on the AYON server and serve
+  its MCP endpoint (``/api/addons/mcp/{version}/mcp``, or ``/api/mcp``).
+
+Unset, it is ``tunnel`` when the service runs under ASH and ``http``
+otherwise (see ``select_transport``).
 """
 import os
 
 from .server import run_remote, run_tunnel
+from .tunnel import select_transport
 
 server_url = os.getenv("AYON_SERVER_URL")
 api_key = os.getenv("AYON_API_KEY")
-transport = os.getenv("AYON_MCP_TRANSPORT", "http").strip().lower()
+transport = select_transport()
 
 
 if not server_url or not api_key:
@@ -23,10 +27,6 @@ if not server_url or not api_key:
     raise RuntimeError(
         msg
     )
-
-if transport not in {"http", "tunnel"}:
-    msg = f"AYON_MCP_TRANSPORT must be 'http' or 'tunnel', not {transport!r}"
-    raise RuntimeError(msg)
 
 # Create FastMCP instance and register tools
 mcp = (

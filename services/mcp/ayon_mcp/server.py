@@ -337,7 +337,7 @@ def run_tunnel(base_url: str, api_key: str) -> FastMCP:
 
     async def serve() -> None:
         url = await resolve_tunnel_url(base_url, api_key)
-        await serve_forever(app, url, api_key)
+        await serve_forever(app, url, api_key, server_url=base_url)
 
     asyncio.run(serve())
     return mcp

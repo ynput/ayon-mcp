@@ -49,6 +49,8 @@ MIN_RECONNECT_DELAY = 1.0
 MAX_RECONNECT_DELAY = 30.0
 # A rejected tunnel is closed by the server right after it is accepted.
 REJECTION_WINDOW = 1.0
+# Timeout (seconds) of the readiness check after a refused handshake.
+READY_TIMEOUT = 5.0
 # A response stream whose client takes nothing for this long (seconds)
 # while the flow control window is used up is dropped.
 CREDIT_TIMEOUT = 300.0
@@ -161,6 +163,33 @@ async def resolve_tunnel_url(base_url: str, api_key: str) -> str:
     return tunnel_url(base_url, addon_version, addon_name)
 
 
+async def server_ready(base_url: str) -> bool | None:
+    """Ask the AYON server whether it has finished starting up.
+
+    While starting, the server already accepts connections but has no
+    addon routes yet, so it refuses the tunnel handshake with HTTP 403,
+    just like a server without the MCP addon does.
+
+    Returns:
+        True if the server is ready, False if it is starting or
+        unreachable, None if it can't tell (servers older than 1.16.5
+        have no ``/readyz``).
+
+    """
+    try:
+        async with httpx.AsyncClient(
+            base_url=base_url.rstrip("/"), timeout=READY_TIMEOUT
+        ) as http:
+            response = await http.get("/readyz")
+    except httpx.HTTPError:
+        return False
+    if response.status_code == httpx.codes.OK:
+        return True
+    if response.status_code >= httpx.codes.INTERNAL_SERVER_ERROR:
+        return False
+    return None
+
+
 class _ClientStalledError(Exception):
     """The HTTP client stopped reading the response."""
 
@@ -225,6 +254,7 @@ class TunnelClient:
         api_key: str,
         *,
         lifespan_state: Mapping[str, Any] | None = None,
+        server_url: str | None = None,
     ) -> None:
         """Initialize the client.
 
@@ -235,17 +265,23 @@ class TunnelClient:
             api_key: Service API key used to authenticate the tunnel.
             lifespan_state: State yielded by the app's lifespan, copied
                 into every request scope like uvicorn does.
+            server_url: AYON server URL, used to tell a server that is
+                still starting from one without the tunnel endpoint.
 
         """
         self._app = app
         self._url = url
         self._api_key = api_key
+        self._server_url = server_url
         self._lifespan_state = lifespan_state or {}
         self._streams: dict[uuid.UUID, _Stream] = {}
         self._send_lock = asyncio.Lock()
         self._websocket: ClientConnection | None = None
         self._last_problem: str | None = None
         self._established = False
+        # Whether the tunnel was ever connected: a server that goes away
+        # afterwards is most likely restarting.
+        self._was_connected = False
 
     async def run(self) -> None:
         """Keep the tunnel connected, reconnecting with backoff."""
@@ -254,23 +290,44 @@ class TunnelClient:
             try:
                 rejected = await self._connect_once()
             except InvalidStatus as exc:
-                # The server refused the WebSocket outright. The addon
-                # accepts it and closes with a reason instead, so this is
-                # a server without this MCP addon version (or a proxy in
-                # front of it refusing WebSockets).
-                self._problem(
-                    f"AYON server rejected the MCP tunnel at {self._url} "
-                    f"with HTTP {exc.response.status_code}. The server "
-                    "probably has no MCP tunnel endpoint there: install "
-                    "the MCP addon of the version in the URL (see "
-                    "AYON_ADDON_VERSION) or run with "
-                    "AYON_MCP_TRANSPORT=http.",
-                    kind=f"http-{exc.response.status_code}",
-                )
-                rejected = True
+                status = exc.response.status_code
+                if await self._server_starting(status):
+                    # Server restarts are routine: retry quietly.
+                    self._problem(
+                        f"AYON server is not ready (HTTP {status}), "
+                        "probably starting up. The MCP tunnel connects "
+                        "once it is.",
+                        kind="starting",
+                        level=logging.INFO,
+                    )
+                    rejected = False
+                elif self._last_problem == "starting":
+                    # The server got ready after refusing the handshake:
+                    # retry once before calling the endpoint missing.
+                    self._last_problem = "started"
+                    rejected = False
+                else:
+                    # The server refused the WebSocket outright. The
+                    # addon accepts it and closes with a reason instead,
+                    # so this is a server without this MCP addon version
+                    # (or a proxy in front of it refusing WebSockets).
+                    self._problem(
+                        f"AYON server rejected the MCP tunnel at "
+                        f"{self._url} with HTTP {status}. The server "
+                        "probably has no MCP tunnel endpoint there: "
+                        "install the MCP addon of the version in the URL "
+                        "(see AYON_ADDON_VERSION) or run with "
+                        "AYON_MCP_TRANSPORT=http.",
+                        kind=f"http-{status}",
+                    )
+                    rejected = True
             except OSError as exc:
                 self._problem(
-                    f"MCP tunnel connection failed: {exc}", kind="network"
+                    f"MCP tunnel connection failed: {exc}",
+                    kind="network",
+                    level=logging.WARNING
+                    if self._was_connected
+                    else logging.ERROR,
                 )
                 rejected = False
             finally:
@@ -313,7 +370,27 @@ class TunnelClient:
             logger.warning("MCP tunnel closed (code %s)", code)
         return False
 
-    def _problem(self, message: str, kind: str) -> None:
+    async def _server_starting(self, status: int) -> bool:
+        """Tell whether a refused handshake means the server is starting.
+
+        Returns:
+            True if the server is down or still starting up, so the
+            refusal says nothing about the tunnel endpoint.
+
+        """
+        if status >= httpx.codes.INTERNAL_SERVER_ERROR:
+            # A proxy in front of a server that is down.
+            return True
+        if self._server_url is None or status not in {
+            httpx.codes.FORBIDDEN,
+            httpx.codes.NOT_FOUND,
+        }:
+            return False
+        return await server_ready(self._server_url) is False
+
+    def _problem(
+        self, message: str, kind: str, level: int = logging.ERROR
+    ) -> None:
         """Log a connection problem; repeats of the same kind only at debug.
 
         ``kind`` identifies the problem (close code, HTTP status) - the
@@ -324,7 +401,7 @@ class TunnelClient:
             logger.debug(message)
             return
         self._last_problem = kind
-        logger.error(message)
+        logger.log(level, message)
 
     def _rejection(self, code: int | None, reason: str | None) -> bool:
         """Log a rejection by the server.
@@ -356,6 +433,7 @@ class TunnelClient:
             return
         closed.cancel()
         self._established = True
+        self._was_connected = True
         self._last_problem = None
         logger.info("MCP tunnel connected to %s", self._url)
         self._websocket = websocket
@@ -502,12 +580,20 @@ class TunnelClient:
         }
 
 
-async def serve_forever(app: Starlette, url: str, api_key: str) -> None:
+async def serve_forever(
+    app: Starlette, url: str, api_key: str, server_url: str | None = None
+) -> None:
     """Run the app's lifespan and keep the tunnel connected.
 
     The lifespan is entered here because nothing else runs it: FastMCP's
     streamable HTTP session manager fails without it.
     """
     async with app.router.lifespan_context(app) as state:
-        client = TunnelClient(app, url, api_key, lifespan_state=state)
+        client = TunnelClient(
+            app,
+            url,
+            api_key,
+            lifespan_state=state,
+            server_url=server_url,
+        )
         await client.run()

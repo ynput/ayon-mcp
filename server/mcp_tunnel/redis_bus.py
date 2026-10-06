@@ -37,12 +37,19 @@ class RedisTunnelBus(TunnelBus):
     def _name(self, name: str) -> str:
         return f"{Redis.prefix}{self._prefix}{name}"
 
-    async def start(self, handler: MessageHandler) -> None:  # noqa: D102
+    async def start(self, handler: MessageHandler) -> None:
+        """Start the tunnel bus and set the message handler.
+
+        Args:
+            handler: Callable to handle incoming messages.
+
+        """
         self._handler = handler
         self._pubsub = await Redis.pubsub()
         self._task = asyncio.create_task(self._read())
 
-    async def stop(self) -> None:  # noqa: D102
+    async def stop(self) -> None:
+        """Stop the tunnel bus."""
         if self._task is not None:
             self._task.cancel()
             self._task = None
@@ -50,34 +57,72 @@ class RedisTunnelBus(TunnelBus):
             await self._pubsub.aclose()
             self._pubsub = None
 
-    async def subscribe(self, channel: str) -> None:  # noqa: D102
+    async def subscribe(self, channel: str) -> None:
+        """Subscribe to a Redis channel.
+
+        Args:
+            channel: The Redis channel to subscribe to.
+
+        Raises:
+            RuntimeError: If the tunnel bus is not started.
+
+        """
         if self._pubsub is None:
             msg = "tunnel bus not started"
             raise RuntimeError(msg)
         await self._pubsub.subscribe(self._name(channel))
 
-    async def unsubscribe(self, channel: str) -> None:  # noqa: D102
+    async def unsubscribe(self, channel: str) -> None:
+        """Unsubscribe from a Redis channel.
+
+        Args:
+            channel: The Redis channel to unsubscribe from.
+
+        """
         if self._pubsub is not None:
             await self._pubsub.unsubscribe(self._name(channel))
 
-    async def publish(self, channel: str, message: bytes) -> int:  # noqa: D102
+    async def publish(self, channel: str, message: bytes) -> int:
+        """Publish a message to a Redis channel.
+
+        Args:
+            channel: The Redis channel to publish to.
+            message: The message to publish.
+
+        Returns:
+            The number of clients that received the message.
+
+        """
         if not Redis.connected:
             await Redis.connect()
         return await Redis.redis_pool.publish(self._name(channel), message)
 
-    async def announce(self, tunnel_id: str) -> None:  # noqa: D102
+    async def announce(self, tunnel_id: str) -> None:
+        """Announce a tunnel to the Redis bus."""
         if not Redis.connected:
             await Redis.connect()
         await Redis.redis_pool.zadd(
             self._name("tunnels"), {tunnel_id: time.time() + TUNNEL_TTL}
         )
 
-    async def withdraw(self, tunnel_id: str) -> None:  # noqa: D102
+    async def withdraw(self, tunnel_id: str) -> None:
+        """Withdraw a tunnel from the Redis bus.
+
+        Args:
+            tunnel_id: The ID of the tunnel to withdraw.
+
+        """
         if not Redis.connected:
             await Redis.connect()
         await Redis.redis_pool.zrem(self._name("tunnels"), tunnel_id)
 
-    async def tunnels(self) -> list[str]:  # noqa: D102
+    async def tunnels(self) -> list[str]:
+        """Return a list of currently announced tunnels.
+
+        Returns:
+            A list of tunnel IDs that are currently announced.
+
+        """
         if not Redis.connected:
             await Redis.connect()
         key = self._name("tunnels")
@@ -103,7 +148,7 @@ class RedisTunnelBus(TunnelBus):
                 )
             except asyncio.CancelledError:
                 raise
-            except Exception:  # noqa: BLE001
+            except Exception:  # ruff: ignore[blind-except]
                 log_traceback("MCP tunnel bus read failed")
                 await asyncio.sleep(1)
                 continue
@@ -116,5 +161,5 @@ class RedisTunnelBus(TunnelBus):
                 await self._handler(
                     channel.removeprefix(prefix), message["data"]
                 )
-            except Exception:  # noqa: BLE001
+            except Exception:  # ruff: ignore[blind-except]
                 log_traceback("MCP tunnel bus handler failed")

@@ -37,6 +37,9 @@ class MemoryNetwork:
     def __init__(self) -> None:
         self.subscribers: dict[str, set[MemoryTunnelBus]] = defaultdict(set)
         self.tunnels: set[str] = set()
+        # Seconds each publish takes, like a round trip to Redis. With 0
+        # publish never suspends, which hides cancellation problems.
+        self.publish_delay = 0.0
 
 
 class MemoryTunnelBus(TunnelBus):
@@ -66,6 +69,8 @@ class MemoryTunnelBus(TunnelBus):
         self.network.subscribers[channel].discard(self)
 
     async def publish(self, channel: str, message: bytes) -> int:
+        if self.network.publish_delay:
+            await asyncio.sleep(self.network.publish_delay)
         subscribers = list(self.network.subscribers[channel])
         for bus in subscribers:
             bus.queue.put_nowait((channel, message))

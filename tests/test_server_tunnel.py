@@ -7,6 +7,7 @@ routing, streaming and cancellation without the MCP SDK.
 """
 
 import asyncio
+import contextlib
 import json
 import uuid
 from typing import cast
@@ -17,8 +18,17 @@ from starlette.websockets import WebSocket
 from websockets.asyncio.client import connect
 
 import mcp_tunnel.hub as hub_module
-from mcp_tunnel.hub import MAX_BUFFERED, OUTBOX_HIGH_WATER, LocalTunnel, Route
+from mcp_tunnel import TunnelHub
+from mcp_tunnel.endpoint import close_reason
+from mcp_tunnel.hub import (
+    MAX_BUFFERED,
+    OUTBOX_HIGH_WATER,
+    OUTBOX_LIMIT,
+    LocalTunnel,
+    Route,
+)
 from mcp_tunnel.protocol import (
+    MAX_CHUNK_SIZE,
     PROTOCOL_HEADER,
     PROTOCOL_VERSION,
     USER_HEADER,
@@ -30,6 +40,7 @@ from fake_ayon_server import (
     SERVICE_KEY,
     FakeWorker,
     MemoryNetwork,
+    MemoryTunnelBus,
     background,
     running,
     wait_until,
@@ -328,8 +339,10 @@ async def test_stuck_service_does_not_block_the_bus() -> None:
     frame = Frame(FrameType.REQUEST_BODY, uuid.uuid4(), b"x")
     try:
         # Frames from the bus are queued without waiting...
-        for _ in range(OUTBOX_HIGH_WATER * 4):
-            tunnel.send_nowait(frame)
+        while tunnel.queued_bytes < OUTBOX_HIGH_WATER * 2:
+            tunnel.send_nowait(Frame(
+                FrameType.REQUEST_BODY, frame.stream_id, b"x" * MAX_CHUNK_SIZE
+            ))
         # ...while requests of this worker wait for the service.
         with pytest.raises(TimeoutError):
             await asyncio.wait_for(tunnel.send(frame), timeout=0.2)
@@ -366,3 +379,163 @@ async def test_service_overrunning_its_window_is_cancelled() -> None:
                     # The client reads nothing; the service is stopped
                     # anyway once it sends more than its window.
                     await wait_until(lambda: bool(service.cancelled))
+
+
+# --- review fixes -------------------------------------------------------------
+
+
+def test_token_query_parameter_is_not_forwarded() -> None:
+    async def run() -> httpx.Response:
+        async with running(FakeWorker()) as worker:
+            service = FakeService(worker.ws_url)
+            async with background(service.run()):
+                await worker.wait_for_tunnels()
+                async with httpx.AsyncClient() as http:
+                    # AYON accepts an access token in ?token=...
+                    return await http.post(
+                        worker.url + "?x=1&token=secret&y=a%20b&flag&t%6Fken=2",
+                        content=b"{}",
+                    )
+
+    response = asyncio.run(run())
+
+    assert response.status_code == 200
+    # Everything else is passed on as sent.
+    assert response.json()["query"] == "x=1&y=a%20b&flag"
+
+
+def test_close_reason_fits_control_frame() -> None:
+    reason = close_reason("\u00e9" * 100)
+
+    assert len(reason.encode()) <= 123
+    assert reason == "\u00e9" * 61  # no half character at the end
+
+
+def test_cross_worker_cancel_survives_slow_bus() -> None:
+    """The client goes away while publishing to Redis takes time."""
+
+    async def run() -> None:
+        network = MemoryNetwork()
+        workers = [FakeWorker(network), FakeWorker(network)]
+        async with running(workers[0]), running(workers[1]):
+            service = FakeService(workers[0].ws_url, stream=True)
+            async with background(service.run()):
+                await workers[0].wait_for_tunnels()
+                async with httpx.AsyncClient() as http:
+                    async with http.stream(
+                        "POST", workers[1].url, content=b"{}"
+                    ) as response:
+                        assert await anext(response.aiter_lines()) == "line 0"
+                        network.publish_delay = 0.05
+                await wait_until(lambda: len(service.cancelled) == 1)
+                service.release.set()
+
+    asyncio.run(run())
+
+
+class _FailingBus(MemoryTunnelBus):
+    """Fails the first ``fail`` calls of ``method``."""
+
+    def __init__(self, network: MemoryNetwork, method: str, fail: int = 1):
+        super().__init__(network)
+        self.method = method
+        self.fail = fail
+        self.starts = 0
+        self.stops = 0
+
+    async def _maybe_fail(self, method: str) -> None:
+        if method == self.method and self.fail:
+            self.fail -= 1
+            raise ConnectionError(f"{method} failed")
+
+    async def start(self, handler) -> None:
+        self.starts += 1
+        await super().start(handler)
+
+    async def stop(self) -> None:
+        self.stops += 1
+        await super().stop()
+
+    async def subscribe(self, channel: str) -> None:
+        await self._maybe_fail("subscribe")
+        await super().subscribe(channel)
+
+    async def announce(self, tunnel_id: str) -> None:
+        await self._maybe_fail("announce")
+        await super().announce(tunnel_id)
+
+
+@pytest.mark.asyncio
+async def test_failed_start_does_not_leak_the_bus() -> None:
+    bus = _FailingBus(MemoryNetwork(), "subscribe")
+    hub = TunnelHub(bus)
+
+    with pytest.raises(ConnectionError):
+        await hub.ensure_started()
+    first_reader = bus.task
+    await asyncio.sleep(0)  # let the cancelled reader finish
+    await hub.ensure_started()
+
+    assert (bus.starts, bus.stops) == (2, 1)
+    assert first_reader is not None and first_reader.cancelled()
+    await hub.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_failed_tunnel_setup_is_cleaned_up() -> None:
+    network = MemoryNetwork()
+    worker = FakeWorker(network)
+    worker.hub = TunnelHub(_FailingBus(network, "announce"))
+    async with running(worker):
+        with contextlib.suppress(Exception):
+            await FakeService(worker.ws_url).run()
+        # The failed tunnel is not picked for requests...
+        await wait_until(lambda: worker.hub.local_count == 0)
+        assert network.tunnels == set()
+        # ...and the service can connect again.
+        service = FakeService(worker.ws_url)
+        async with background(service.run()):
+            await worker.wait_for_tunnels()
+            async with httpx.AsyncClient() as http:
+                response = await http.post(worker.url, content=b"{}")
+    assert response.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_bus_upload_to_stuck_service_is_bounded() -> None:
+    """Request bodies from other workers can't wait, so they fail."""
+    network = MemoryNetwork()
+    hub = TunnelHub(MemoryTunnelBus(network))
+    await hub.ensure_started()
+    websocket = _BlockedWebSocket()
+    tunnel = LocalTunnel(cast(WebSocket, websocket), "service")
+    tunnel.start()
+    hub._local[tunnel.id] = tunnel
+    origin = uuid.uuid4()
+    replies = MemoryTunnelBus(network)
+    await replies.subscribe(f"worker:{origin.hex}")
+    stream_id = uuid.uuid4()
+    channel = f"tunnel:{tunnel.id}"
+
+    def message(frame: Frame) -> bytes:
+        return origin.bytes + frame.encode()
+
+    try:
+        await hub._on_bus_message(channel, message(Frame.with_json(
+            FrameType.REQUEST_START, stream_id, {"method": "POST"}
+        )))
+        chunk = b"x" * MAX_CHUNK_SIZE
+        for _ in range(OUTBOX_LIMIT // MAX_CHUNK_SIZE * 2):
+            await hub._on_bus_message(channel, message(
+                Frame(FrameType.REQUEST_BODY, stream_id, chunk)
+            ))
+
+        assert tunnel.queued_bytes <= OUTBOX_LIMIT + MAX_CHUNK_SIZE
+        _, reply = replies.queue.get_nowait()
+        error = Frame.decode(reply)
+        assert error.type is FrameType.RESPONSE_ERROR
+        assert "not keeping up" in error.json()["message"]
+        assert stream_id not in hub._forwarded
+    finally:
+        await tunnel.close()
+        await hub.shutdown()

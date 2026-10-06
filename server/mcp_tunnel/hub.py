@@ -43,15 +43,27 @@ LIVENESS_INTERVAL = 10.0
 # when the window runs out), so more means a broken service.
 MAX_BUFFERED = INITIAL_WINDOW + MAX_CHUNK_SIZE
 
-# Frames queued for a service before requests forwarded by this worker
-# wait for the service to catch up. Frames from the bus never wait - the
-# bus reader must not block - and are only request bodies, cancels and
-# window updates of requests in flight.
-OUTBOX_HIGH_WATER = 64
+# Bytes queued for a service before requests of this worker wait for the
+# service to catch up.
+OUTBOX_HIGH_WATER = 1024 * 1024
+
+# Most bytes queued for a service. Requests of other workers arrive over
+# the bus and can't wait - the bus reader must not block - so a request
+# whose frames would go over this fails instead.
+OUTBOX_LIMIT = 8 * 1024 * 1024
+
+# Frames carrying request data, the ones ``OUTBOX_LIMIT`` applies to.
+# Control frames (end, cancel, window) are tiny and always queued, so a
+# request can still be cancelled when the service is behind.
+DATA_FRAMES = frozenset({FrameType.REQUEST_START, FrameType.REQUEST_BODY})
 
 
 class TunnelClosedError(Exception):
     """The tunnel closed before the request was complete."""
+
+
+class TunnelBusyError(Exception):
+    """The service is too far behind to take more request data."""
 
 
 def _tunnel_channel(tunnel_id: str) -> str:
@@ -82,6 +94,7 @@ class LocalTunnel:
         self.user_name = user_name
         self.closed = False
         self._outbox: collections.deque[bytes] = collections.deque()
+        self.queued_bytes = 0
         self._pending = asyncio.Event()
         self._drained = asyncio.Event()
         self._drained.set()
@@ -100,18 +113,28 @@ class LocalTunnel:
             with contextlib.suppress(asyncio.CancelledError):
                 await self._writer
 
-    def send_nowait(self, frame: Frame) -> None:
+    def send_nowait(self, frame: Frame, *, bounded: bool = False) -> None:
         """Queue a frame for the service.
+
+        Args:
+            frame: The frame.
+            bounded: Refuse the frame if it would take the outbox over
+                ``OUTBOX_LIMIT``.
 
         Raises:
             TunnelClosedError: If the tunnel is closed.
+            TunnelBusyError: If ``bounded`` and the outbox is full.
 
         """
         if self.closed:
             raise TunnelClosedError
-        self._outbox.append(frame.encode())
+        data = frame.encode()
+        if bounded and self.queued_bytes + len(data) > OUTBOX_LIMIT:
+            raise TunnelBusyError
+        self._outbox.append(data)
+        self.queued_bytes += len(data)
         self._pending.set()
-        if len(self._outbox) >= OUTBOX_HIGH_WATER:
+        if self.queued_bytes >= OUTBOX_HIGH_WATER:
             self._drained.clear()
 
     async def send(self, frame: Frame) -> None:
@@ -132,7 +155,8 @@ class LocalTunnel:
             self._pending.clear()
             await self._pending.wait()
         data = self._outbox.popleft()
-        if len(self._outbox) < OUTBOX_HIGH_WATER // 2:
+        self.queued_bytes -= len(data)
+        if self.queued_bytes < OUTBOX_HIGH_WATER // 2:
             self._drained.set()
         return data
 
@@ -288,7 +312,13 @@ class TunnelHub:
             if self._started:
                 return
             await self.bus.start(self._on_bus_message)
-            await self.bus.subscribe(_worker_channel(self.worker_id))
+            try:
+                await self.bus.subscribe(_worker_channel(self.worker_id))
+            except BaseException:
+                # Stop the reader, or the next attempt starts a second one.
+                with contextlib.suppress(Exception):
+                    await self.bus.stop()
+                raise
             self._started = True
 
     async def shutdown(self) -> None:
@@ -343,16 +373,16 @@ class TunnelHub:
         """Serve an accepted tunnel WebSocket until it disconnects."""
         await self.ensure_started()
         tunnel = LocalTunnel(websocket, user_name)
-        tunnel.start()
-        self._local[tunnel.id] = tunnel
-        await self.bus.subscribe(_tunnel_channel(tunnel.id))
-        await self.bus.announce(tunnel.id)
-        heartbeat = asyncio.create_task(self._heartbeat(tunnel.id))
-        logger.info(f"MCP tunnel connected ({user_name}, {tunnel.id})")
+        heartbeat: asyncio.Task[None] | None = None
         try:
+            # Inside the try, so a failed setup (e.g. Redis down) is
+            # cleaned up too and the tunnel is never picked for requests.
+            heartbeat = await self._attach(tunnel)
+            logger.info(f"MCP tunnel connected ({user_name}, {tunnel.id})")
             await self._receive_loop(tunnel)
         finally:
-            heartbeat.cancel()
+            if heartbeat is not None:
+                heartbeat.cancel()
             await tunnel.close()
             self._local.pop(tunnel.id, None)
             with contextlib.suppress(Exception):
@@ -362,6 +392,19 @@ class TunnelHub:
             logger.info(
                 f"MCP tunnel disconnected ({user_name}, {tunnel.id})"
             )
+
+    async def _attach(self, tunnel: LocalTunnel) -> asyncio.Task[None]:
+        """Make a tunnel available to all workers.
+
+        Returns:
+            The task keeping the tunnel listed.
+
+        """
+        tunnel.start()
+        self._local[tunnel.id] = tunnel
+        await self.bus.subscribe(_tunnel_channel(tunnel.id))
+        await self.bus.announce(tunnel.id)
+        return asyncio.create_task(self._heartbeat(tunnel.id))
 
     async def _heartbeat(self, tunnel_id: str) -> None:
         while True:
@@ -443,10 +486,16 @@ class TunnelHub:
             if route is not None:
                 route.deliver(frame)
             return
+        await self._to_service(
+            channel.removeprefix("tunnel:"),
+            uuid.UUID(bytes=data[:16]),
+            Frame.decode(data[16:]),
+        )
 
-        tunnel_id = channel.removeprefix("tunnel:")
-        origin = uuid.UUID(bytes=data[:16])
-        frame = Frame.decode(data[16:])
+    async def _to_service(
+        self, tunnel_id: str, origin: uuid.UUID, frame: Frame
+    ) -> None:
+        """Forward a frame from another worker to a local tunnel."""
         tunnel = self._local.get(tunnel_id)
         if tunnel is None:
             if frame.type is FrameType.REQUEST_START:
@@ -456,12 +505,33 @@ class TunnelHub:
             return
         if frame.type is FrameType.REQUEST_START:
             self._forwarded[frame.stream_id] = (tunnel_id, origin)
+        elif frame.stream_id not in self._forwarded:
+            # Finished or failed request - drop the rest of its frames.
+            return
         elif frame.type is FrameType.CANCEL:
             self._forwarded.pop(frame.stream_id, None)
         try:
-            tunnel.send_nowait(frame)
+            tunnel.send_nowait(frame, bounded=frame.type in DATA_FRAMES)
+        except TunnelBusyError:
+            await self._fail_busy(tunnel, origin, frame.stream_id)
         except TunnelClosedError:
             if self._forwarded.pop(frame.stream_id, None) is not None:
                 await self._reply_error(
                     origin, frame.stream_id, "MCP service disconnected"
                 )
+
+    async def _fail_busy(
+        self, tunnel: LocalTunnel, origin: uuid.UUID, stream_id: uuid.UUID
+    ) -> None:
+        """Fail a request the service is too far behind to take."""
+        logger.warning(
+            f"MCP service of tunnel {tunnel.id} is not reading requests, "
+            f"failing request {stream_id}"
+        )
+        self._forwarded.pop(stream_id, None)
+        # The service may already have part of the request.
+        with contextlib.suppress(TunnelClosedError):
+            tunnel.send_nowait(Frame(FrameType.CANCEL, stream_id))
+        await self._reply_error(
+            origin, stream_id, "MCP service is not keeping up with requests"
+        )

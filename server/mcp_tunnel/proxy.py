@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 from typing import TYPE_CHECKING
+from urllib.parse import unquote_plus
 
 from starlette.responses import JSONResponse, Response, StreamingResponse
 
@@ -45,6 +46,15 @@ CREDENTIAL_HEADERS = frozenset({
     USER_HEADER,
 })
 
+# How long to keep trying to tell the service a request was cancelled.
+CANCEL_TIMEOUT = 5.0
+
+# Tasks sending CANCEL, referenced until done so they aren't collected.
+_background: set[asyncio.Task[None]] = set()
+
+# AYON also accepts an access token in the query (``?token=``).
+CREDENTIAL_QUERY_PARAMS = frozenset({"token"})
+
 # The service must not set cookies on the AYON server origin.
 BLOCKED_RESPONSE_HEADERS = frozenset({"set-cookie"})
 
@@ -57,6 +67,23 @@ def _unavailable() -> Response:
     response = _error(503, "MCP service is not connected")
     response.headers["Retry-After"] = "5"
     return response
+
+
+def _service_query(request: Request) -> str:
+    """Return the request's query string without credentials.
+
+    Other parameters are kept exactly as sent.
+
+    Returns:
+        The query string for the service.
+
+    """
+    return "&".join(
+        part
+        for part in request.url.query.split("&")
+        if part
+        and unquote_plus(part.partition("=")[0]) not in CREDENTIAL_QUERY_PARAMS
+    )
 
 
 class _ProxiedRequest:
@@ -80,7 +107,7 @@ class _ProxiedRequest:
                 {
                     "method": request.method,
                     "path": SERVICE_MCP_PATH,
-                    "query": request.url.query,
+                    "query": _service_query(request),
                     "headers": headers,
                 },
             )
@@ -92,11 +119,22 @@ class _ProxiedRequest:
                 )
         await self.route.send(Frame(FrameType.REQUEST_END, stream_id))
 
-    async def cancel(self) -> None:
-        """Close the route and tell the service, unless it finished."""
+    def cancel(self) -> None:
+        """Close the route and tell the service, unless it finished.
+
+        Usually runs while the request is being cancelled (the client went
+        away), where any await - e.g. publishing to Redis - would be
+        cancelled too. So CANCEL is sent from a task of its own.
+        """
         self.route.close()
         if not self.finished:
-            with contextlib.suppress(Exception):
+            task = asyncio.create_task(self._send_cancel())
+            _background.add(task)
+            task.add_done_callback(_background.discard)
+
+    async def _send_cancel(self) -> None:
+        with contextlib.suppress(Exception):
+            async with asyncio.timeout(CANCEL_TIMEOUT):
                 await self.route.send(
                     Frame(FrameType.CANCEL, self.route.stream_id)
                 )
@@ -116,7 +154,7 @@ class _ProxiedRequest:
             message = first.json().get("message", "unknown error")
             return _error(502, f"MCP service error: {message}")
         if first.type is not FrameType.RESPONSE_START:
-            await self.cancel()
+            self.cancel()
             return _error(
                 502, f"Unexpected MCP tunnel frame {first.type.name}"
             )
@@ -142,7 +180,7 @@ class _ProxiedRequest:
         finally:
             # Runs on completion and when the client disconnects
             # mid-stream; only the latter sends CANCEL.
-            await self.cancel()
+            self.cancel()
 
     async def _payloads(self) -> AsyncIterator[bytes]:
         consumed = 0
@@ -201,10 +239,10 @@ async def proxy_request(
         route.close()
         return _error(502, "MCP service disconnected")
     except TimeoutError:
-        await proxied.cancel()
+        proxied.cancel()
         return _error(504, "MCP service did not respond")
     except BaseException:
         # The client went away while the request was being forwarded.
-        await proxied.cancel()
+        proxied.cancel()
         raise
     return await proxied.respond(first)

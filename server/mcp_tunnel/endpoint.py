@@ -22,8 +22,8 @@ CLOSE_UNSUPPORTED = 4400
 CLOSE_UNAUTHORIZED = 4401
 CLOSE_FORBIDDEN = 4403
 
-# WebSocket close reasons must fit in a control frame (123 bytes).
-MAX_REASON_LENGTH = 120
+# WebSocket close reasons must fit in a control frame: 123 bytes of UTF-8.
+MAX_REASON_BYTES = 123
 
 
 class TunnelRejectedError(Exception):
@@ -40,6 +40,17 @@ class TunnelRejectedError(Exception):
         super().__init__(reason)
         self.code = code
         self.reason = reason
+
+
+def close_reason(reason: str) -> str:
+    """Shorten a close reason to fit a close frame.
+
+    Returns:
+        At most ``MAX_REASON_BYTES`` of UTF-8, cut between characters.
+
+    """
+    data = reason.encode()[:MAX_REASON_BYTES]
+    return data.decode("utf-8", errors="ignore")
 
 
 def _check_protocol(websocket: WebSocket, user_name: str) -> None:
@@ -83,7 +94,7 @@ async def serve_tunnel(
     except TunnelRejectedError as exc:
         await websocket.accept()
         await websocket.close(
-            code=exc.code, reason=exc.reason[:MAX_REASON_LENGTH]
+            code=exc.code, reason=close_reason(exc.reason)
         )
         return
 

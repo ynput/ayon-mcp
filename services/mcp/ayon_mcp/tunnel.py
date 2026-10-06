@@ -281,7 +281,7 @@ class TunnelClient:
                 delay = MIN_RECONNECT_DELAY
             # Full jitter, so replicas restarting together don't
             # reconnect in lockstep.
-            await asyncio.sleep(random.uniform(0, delay))  # noqa: S311
+            await asyncio.sleep(random.uniform(0, delay))  # ruff: ignore[suspicious-non-cryptographic-random-usage]
             delay = min(delay * 2, MAX_RECONNECT_DELAY)
 
     async def _connect_once(self) -> bool:

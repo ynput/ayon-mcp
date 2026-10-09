@@ -210,6 +210,69 @@ You can still manually regenerate from the local spec file when needed:
 uv run python ./services/mcp/scripts/generate_openapi_tools.py
 ```
 
+### Addon MCP Tools
+
+Addons can ship their own MCP tools without any change in this repository.
+On startup, AYON MCP:
+
+1. Fetches `GET /api/addons` to list installed addons
+2. For each addon, requests `GET /api/addons/{name}/{version}/mcp/tools`
+   (production version, falling back to the first listed version)
+3. Skips addons that answer 404 or an invalid payload
+4. Registers every returned tool as `{namespace}_{name}` in the discovery
+   catalog (`search_ayon_tools`, `get_ayon_tool_schema`, `call_ayon_tool`)
+
+The addon endpoint returns:
+
+```json
+{
+  "namespace": "reports",
+  "tools": [
+    {
+      "name": "list_metrics",
+      "description": "List available metrics from the Reports catalog.",
+      "parameters": {
+        "type": "object",
+        "properties": {"project_name": {"type": "string"}},
+        "required": ["project_name"]
+      },
+      "endpoint": {
+        "method": "GET",
+        "path": "/api/addons/reports/{version}/metrics"
+      }
+    }
+  ]
+}
+```
+
+- `{version}` in `endpoint.path` is replaced with the addon version.
+- `{param}` placeholders matching an argument name become path parameters.
+- Remaining arguments are sent as query parameters for `GET` and as a JSON
+  body for other methods.
+- `readOnly: true` on a tool marks it safe to run without confirmation
+  (use it for `POST` query endpoints). Without the flag, `POST`, `PUT`,
+  `PATCH` and `DELETE` tools require `confirm_mutation=true`, like the
+  curated write tools.
+- `endpoint.path` must start with `/api/addons/{name}/{version}/` and
+  contain no `..` segments; tools pointing elsewhere are skipped with a
+  warning. The resolved path is checked again before every call.
+- Addons are queried concurrently at startup, each with its own timeout,
+  so one slow addon only loses its own tools.
+- Calls carry the caller's AYON API key, so the addon applies its own ACL.
+
+Known limitations:
+
+- Addon tools are only exposed in discovery mode.
+- Discovery runs once at startup with the configured `AYON_API_KEY`. That
+  key needs read access to `/api/addons` and to each addon's `/mcp/tools`
+  endpoint, otherwise the affected addon is skipped (logged as a warning).
+- The addon version is resolved at startup. After a bundle change, restart
+  AYON MCP so tool endpoints point at the new version.
+
+To disable discovery, set:
+
+- `AYON_MCP_ENABLE_ADDON_TOOLS=false`
+
 ## Development and tests
 
 ### Running tests

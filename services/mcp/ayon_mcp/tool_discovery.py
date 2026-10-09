@@ -12,6 +12,9 @@ from fastmcp.tools.function_tool import FunctionTool
 if TYPE_CHECKING:
     from collections.abc import Callable
 
+    from .addon_discovery import AddonTool
+    from .addon_tools import AddonToolProvider
+
 
 MUTATING_TOOL_NAMES = frozenset({
     "add_comment",
@@ -32,8 +35,9 @@ class AyonTool:
     namespace: str
     description: str
     parameters: dict[str, Any]
-    function: Callable[..., Any]
+    function: Callable[..., Any] | None
     requires_confirmation: bool = False
+    is_addon_tool: bool = False
 
 
 def _tool_description(function: Callable[..., Any]) -> str:
@@ -85,14 +89,49 @@ def create_curated_tools(
     return tools
 
 
+def create_addon_ayon_tools(addon_tools: list[AddonTool]) -> list[AyonTool]:
+    """Convert addon tools to AyonTool format for discovery.
+
+    Args:
+        addon_tools: List of discovered addon tools.
+
+    Returns:
+        List of AyonTool instances for the discovery provider.
+
+    """
+    return [
+        AyonTool(
+            name=tool.full_name,
+            namespace=f"ayon.addon.{tool.addon_name}",
+            description=tool.description,
+            parameters=tool.parameters,
+            function=None,
+            requires_confirmation=tool.requires_confirmation,
+            is_addon_tool=True,
+        )
+        for tool in addon_tools
+    ]
+
+
 class AyonDynamicToolProvider(BaseDynamicToolProvider[AyonTool]):
     """Expose AYON tools through chuk's compact discovery protocol."""
 
-    def __init__(self, tools: list[AyonTool]) -> None:
-        """Initialize the provider with its available AYON tools."""
+    def __init__(
+        self,
+        tools: list[AyonTool],
+        addon_provider: AddonToolProvider | None = None,
+    ) -> None:
+        """Initialize the provider with its available AYON tools.
+
+        Args:
+            tools: List of all tools (curated + addon).
+            addon_provider: Provider for executing addon tools.
+
+        """
         super().__init__()
         self._tools = tools
         self._tools_by_name = {tool.name: tool for tool in tools}
+        self._addon_provider = addon_provider
 
     async def get_all_tools(self) -> list[AyonTool]:
         """Return every catalogued AYON tool.
@@ -185,6 +224,22 @@ class AyonDynamicToolProvider(BaseDynamicToolProvider[AyonTool]):
                 ),
             }
 
+        # Handle addon tools via addon provider
+        if tool.is_addon_tool:
+            if self._addon_provider is None:
+                return {
+                    "success": False,
+                    "error": "Addon tool provider not configured.",
+                }
+            return await self._addon_provider.execute_tool(tool_name, arguments)
+
+        # Handle curated tools with function
+        if tool.function is None:
+            return {
+                "success": False,
+                "error": f"Tool '{tool_name}' has no executable function.",
+            }
+
         try:
             result = tool.function(**arguments)
             if inspect.isawaitable(result):
@@ -197,14 +252,24 @@ class AyonDynamicToolProvider(BaseDynamicToolProvider[AyonTool]):
 
 def create_discovery_tools(
     functions: list[Callable[..., Any]],
+    addon_tools: list[AddonTool] | None = None,
+    addon_provider: AddonToolProvider | None = None,
 ) -> list[Callable[..., Any]]:
     """Create the fixed MCP surface for discovering AYON tools on demand.
+
+    Args:
+        functions: Curated FastMCP-compatible tool functions.
+        addon_tools: Tools discovered from AYON addons.
+        addon_provider: Provider that executes addon tools via REST.
 
     Returns:
         The five callable MCP discovery tools.
 
     """
-    provider = AyonDynamicToolProvider(create_curated_tools(functions))
+    all_tools = create_curated_tools(functions)
+    if addon_tools:
+        all_tools = [*all_tools, *create_addon_ayon_tools(addon_tools)]
+    provider = AyonDynamicToolProvider(all_tools, addon_provider)
 
     async def list_ayon_tools(limit: int = 50) -> dict[str, Any]:
         """List AYON tools with concise descriptions.

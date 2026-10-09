@@ -20,6 +20,7 @@ dependencies = [
     "chuk-tool-processor>=0.26.1",
     "opentelemetry-distro>=0.65b0",
     "tiktoken>=0.14.0",
+    "websockets>=15.0.1",
 ]
 
 [dependency-groups]

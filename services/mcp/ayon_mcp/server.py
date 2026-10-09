@@ -186,19 +186,20 @@ def create_mcp_server(base_url: str, api_key: str) -> FastMCP:
         instructions=instructions
     )
 
-    addon_tools = []
-    if addon_tools_enabled():
-        addon_tools = discover_addon_tools_sync(base_url, api_key=api_key)
-
     if tools_module.tool_exposure_mode() == "direct":
         register_tools(mcp, tools_module.ALL_TOOLS)
-        if addon_tools:
-            logger.warning(
-                "%d addon tools discovered but AYON_MCP_TOOL_EXPOSURE=direct "
-                "only exposes curated tools; use discovery mode for addons.",
-                len(addon_tools),
+        if addon_tools_enabled():
+            # Direct mode cannot expose addon tools, so skip the requests.
+            logger.info(
+                "Addon MCP tool discovery skipped: AYON_MCP_TOOL_EXPOSURE="
+                "direct only exposes curated tools."
             )
     else:
+        addon_tools = []
+        if addon_tools_enabled():
+            addon_tools = discover_addon_tools_sync(
+                base_url, api_key=api_key, variant=addon_tools_variant()
+            )
         register_tools(
             mcp,
             create_discovery_tools(
@@ -215,6 +216,19 @@ def addon_tools_enabled() -> bool:
     """Return True if addon MCP tool discovery should run at startup."""
     value = (os.getenv("AYON_MCP_ENABLE_ADDON_TOOLS", "true") or "").strip()
     return value.lower() not in {"0", "false", "no", "off"}
+
+
+def addon_tools_variant() -> str:
+    """Return the bundle variant whose addon versions expose MCP tools.
+
+    ``AYON_MCP_ADDON_VARIANT`` wins, then ``AYON_DEFAULT_SETTINGS_VARIANT``
+    (the variant an AYON service runs on), then ``production``.
+    """
+    for name in ("AYON_MCP_ADDON_VARIANT", "AYON_DEFAULT_SETTINGS_VARIANT"):
+        value = (os.getenv(name) or "").strip()
+        if value:
+            return value
+    return "production"
 
 
 def run_remote(base_url: str, api_key: str) -> FastMCP:

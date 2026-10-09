@@ -174,6 +174,18 @@ class TestCreateMcpServer:
             getattr(function, "__name__", "") for function in ALL_TOOLS
         }
 
+    def test_direct_exposure_mode_skips_addon_discovery(self, monkeypatch):
+        from ayon_mcp import server as server_module
+
+        discover = MagicMock(return_value=[])
+        monkeypatch.setattr(server_module, "discover_addon_tools_sync", discover)
+        monkeypatch.setenv("AYON_MCP_TOOL_EXPOSURE", "direct")
+        monkeypatch.delenv("AYON_MCP_ENABLE_ADDON_TOOLS", raising=False)
+
+        server_module.create_mcp_server("http://localhost:5000", "key")
+
+        discover.assert_not_called()
+
     @pytest.mark.parametrize(
         "otel_enabled", [None, "false", "TRUE", "true"]
     )

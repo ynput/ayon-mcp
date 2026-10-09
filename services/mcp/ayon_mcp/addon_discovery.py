@@ -22,6 +22,8 @@ SUPPORTED_HTTP_METHODS = frozenset({"GET", *MUTATING_HTTP_METHODS})
 # MCP tool names: ^[a-zA-Z0-9_-]{1,64}$ (applies to the namespaced name).
 _TOOL_NAME_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
 _MAX_DECODE_ROUNDS = 3
+# call_ayon_tool consumes these before the call reaches the addon.
+RESERVED_PARAMETER_NAMES = frozenset({"confirm_mutation"})
 
 
 @dataclass
@@ -240,6 +242,18 @@ def _parse_tool(
 
     description = tool_def.get("description", "")
     parameters = tool_def.get("parameters", {})
+    properties = parameters.get("properties") if isinstance(
+        parameters, dict
+    ) else None
+    if isinstance(properties, dict) and any(
+        key in properties for key in RESERVED_PARAMETER_NAMES
+    ):
+        logger.warning(
+            "Skipping addon tool %s: parameters use a reserved name (%s)",
+            full_name,
+            ", ".join(sorted(RESERVED_PARAMETER_NAMES)),
+        )
+        return None
     read_only = tool_def.get("readOnly")
     return AddonTool(
         name=name,
@@ -292,15 +306,61 @@ def parse_addon_tools(
     return tools
 
 
-def _resolve_version(addon_info: dict[str, Any]) -> str | None:
-    """Return the production version, or the first listed version."""
-    version = addon_info.get("productionVersion")
-    if version:
-        return str(version)
-    versions = addon_info.get("versions") or {}
-    if isinstance(versions, dict) and versions:
-        return str(next(iter(versions)))
-    return None
+_VARIANT_VERSION_FIELDS = {
+    "production": "productionVersion",
+    "staging": "stagingVersion",
+}
+
+
+async def _resolve_targets(
+    client: RestApiClient,
+    addons: list[dict[str, Any]],
+    variant: str,
+    api_key: str,
+) -> list[tuple[str, str]]:
+    """Return ``(addon_name, version)`` pairs active in ``variant``.
+
+    ``production`` and ``staging`` use the versions the addon list already
+    reports for those bundles. Any other variant is treated as a dev bundle
+    name and resolved through ``GET /api/bundles``. Addons that are not part
+    of the variant's bundle are skipped, so discovery never picks an
+    arbitrary installed version.
+    """
+    field = _VARIANT_VERSION_FIELDS.get(variant)
+    if field is not None:
+        versions = {
+            addon.get("name"): addon.get(field) for addon in addons
+        }
+    else:
+        versions = await _fetch_bundle_versions(client, variant, api_key)
+
+    targets: list[tuple[str, str]] = []
+    for addon_info in addons:
+        addon_name = addon_info.get("name")
+        version = versions.get(addon_name)
+        if addon_name and version:
+            targets.append((str(addon_name), str(version)))
+    return targets
+
+
+async def _fetch_bundle_versions(
+    client: RestApiClient,
+    bundle_name: str,
+    api_key: str,
+) -> dict[str, Any]:
+    """Return the addon versions pinned by the bundle named ``bundle_name``."""
+    response = await client.request(
+        "GET", "/api/bundles", headers=_auth_headers(api_key)
+    )
+    bundles = response.get("bundles") if isinstance(response, dict) else None
+    for bundle in bundles if isinstance(bundles, list) else []:
+        if isinstance(bundle, dict) and bundle.get("name") == bundle_name:
+            addons = bundle.get("addons")
+            return addons if isinstance(addons, dict) else {}
+    logger.warning(
+        "Bundle %r not found, no addon MCP tools discovered", bundle_name
+    )
+    return {}
 
 
 async def _discover_one_addon(
@@ -348,8 +408,9 @@ async def discover_addon_tools(
     client: RestApiClient,
     api_key: str = "",
     timeout: float = 10.0,  # ruff: ignore[async-function-with-timeout]
+    variant: str = "production",
 ) -> list[AddonTool]:
-    """Discover MCP tools from all installed addons.
+    """Discover MCP tools from addons active in the given variant.
 
     Addons are queried concurrently, each with its own timeout, so one slow
     addon cannot drop the tools of the others.
@@ -358,6 +419,7 @@ async def discover_addon_tools(
         client: REST client configured with AYON server URL.
         api_key: API key used for discovery requests at startup.
         timeout: Per-request timeout in seconds.
+        variant: ``production``, ``staging`` or a dev bundle name.
 
     Returns:
         List of all discovered addon tools.
@@ -367,12 +429,9 @@ async def discover_addon_tools(
         fetch_addons(client, api_key), timeout=timeout
     )
 
-    targets: list[tuple[str, str]] = []
-    for addon_info in addons:
-        addon_name = addon_info.get("name")
-        version = _resolve_version(addon_info)
-        if addon_name and version:
-            targets.append((str(addon_name), version))
+    targets = await asyncio.wait_for(
+        _resolve_targets(client, addons, variant, api_key), timeout=timeout
+    )
 
     results = await asyncio.gather(
         *(
@@ -410,6 +469,7 @@ def discover_addon_tools_sync(
     base_url: str,
     api_key: str = "",
     timeout: float = 10.0,
+    variant: str = "production",
 ) -> list[AddonTool]:
     """Run addon discovery from synchronous startup code.
 
@@ -424,7 +484,9 @@ def discover_addon_tools_sync(
     async def _runner() -> list[AddonTool]:
         client = RestApiClient(base_url)
         try:
-            return await discover_addon_tools(client, api_key, timeout)
+            return await discover_addon_tools(
+                client, api_key, timeout, variant
+            )
         finally:
             await client.close()
 

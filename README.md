@@ -256,13 +256,21 @@ The addon endpoint returns:
 - `endpoint.path` must start with `/api/addons/{name}/{version}/` and
   contain no `..` segments; tools pointing elsewhere are skipped with a
   warning. The resolved path is checked again before every call.
+- Only addon versions active in the configured variant are queried:
+  `AYON_MCP_ADDON_VARIANT`, else `AYON_DEFAULT_SETTINGS_VARIANT`, else
+  `production`. `production`/`staging` use the matching bundle; any other
+  value is treated as a dev bundle name. Addons outside that bundle are
+  skipped.
 - Addons are queried concurrently at startup, each with its own timeout,
   so one slow addon only loses its own tools.
 - Calls carry the caller's AYON API key, so the addon applies its own ACL.
 
 Known limitations:
 
-- Addon tools are only exposed in discovery mode.
+- Addon tools are only exposed in discovery mode; in direct mode
+  discovery is skipped entirely.
+- `confirm_mutation` is reserved by `call_ayon_tool`; an addon tool that
+  declares a parameter with that name is skipped with a warning.
 - Discovery runs once at startup with the configured `AYON_API_KEY`. That
   key needs read access to `/api/addons` and to each addon's `/mcp/tools`
   endpoint, otherwise the affected addon is skipped (logged as a warning).

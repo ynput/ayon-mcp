@@ -246,6 +246,33 @@ def test_parse_addon_tools_skips_malformed_definitions():
     assert tools[0].requires_confirmation is True
 
 
+def test_parse_addon_tools_rejects_reserved_parameter_names():
+    spec = {
+        "tools": [
+            {
+                "name": "clash",
+                "parameters": {
+                    "type": "object",
+                    "properties": {"confirm_mutation": {"type": "boolean"}},
+                },
+                "endpoint": {"path": "/api/addons/planner/{version}/a"},
+            },
+            {
+                "name": "ok",
+                "parameters": {
+                    "type": "object",
+                    "properties": {"project_name": {"type": "string"}},
+                },
+                "endpoint": {"path": "/api/addons/planner/{version}/b"},
+            },
+        ],
+    }
+
+    tools = parse_addon_tools(spec, "planner", "2.0.0")
+
+    assert [t.name for t in tools] == ["ok"]
+
+
 @pytest.mark.parametrize("tools_value", [None, "nope", {"a": 1}, 7])
 def test_parse_addon_tools_ignores_non_list_tools(tools_value):
     assert parse_addon_tools({"tools": tools_value}, "x", "1") == []
@@ -322,11 +349,81 @@ async def test_discover_skips_addons_without_mcp_endpoint():
         "reports_list_metrics",
         "reports_query_metric",
         "reports_add_chart",
-        "planner_get_workload",
     }
     assert client.calls[0]["headers"] == {"x-api-key": "key"}
     requested = {c["path"] for c in client.calls}
     assert "/api/addons/broken/None/mcp/tools" not in requested
+    # No production version: never fall back to an arbitrary installed one.
+    assert "/api/addons/planner/2.0.0/mcp/tools" not in requested
+
+
+@pytest.mark.asyncio
+async def test_discover_uses_staging_versions_for_staging_variant():
+    client = FakeRestClient(
+        {
+            ("GET", "/api/addons"): {
+                "addons": [
+                    {
+                        "name": "reports",
+                        "productionVersion": "1.0.0",
+                        "stagingVersion": "1.2.0",
+                    },
+                    {"name": "core", "productionVersion": "1.0.0"},
+                ]
+            },
+            ("GET", "/api/addons/reports/1.2.0/mcp/tools"): REPORTS_SPEC,
+        }
+    )
+
+    tools = await discover_addon_tools(client, api_key="k", variant="staging")
+
+    assert {t.addon_version for t in tools} == {"1.2.0"}
+    requested = {c["path"] for c in client.calls}
+    assert "/api/addons/reports/1.0.0/mcp/tools" not in requested
+    assert "/api/addons/core/1.0.0/mcp/tools" not in requested
+
+
+@pytest.mark.asyncio
+async def test_discover_resolves_dev_bundle_versions():
+    client = FakeRestClient(
+        {
+            ("GET", "/api/addons"): {
+                "addons": [
+                    {"name": "reports", "productionVersion": "1.0.0"},
+                    {"name": "core", "productionVersion": "1.0.0"},
+                ]
+            },
+            ("GET", "/api/bundles"): {
+                "bundles": [
+                    {"name": "other", "addons": {"core": "1.0.0"}},
+                    {"name": "dev-filip", "addons": {"reports": "1.3.0-dev"}},
+                ]
+            },
+            ("GET", "/api/addons/reports/1.3.0-dev/mcp/tools"): REPORTS_SPEC,
+        }
+    )
+
+    tools = await discover_addon_tools(
+        client, api_key="k", variant="dev-filip"
+    )
+
+    assert {t.addon_version for t in tools} == {"1.3.0-dev"}
+    requested = {c["path"] for c in client.calls}
+    assert "/api/addons/core/1.0.0/mcp/tools" not in requested
+
+
+@pytest.mark.asyncio
+async def test_discover_unknown_bundle_yields_no_tools():
+    client = FakeRestClient(
+        {
+            ("GET", "/api/addons"): {
+                "addons": [{"name": "reports", "productionVersion": "1.0.0"}]
+            },
+            ("GET", "/api/bundles"): {"bundles": []},
+        }
+    )
+
+    assert await discover_addon_tools(client, variant="missing") == []
 
 
 @pytest.mark.asyncio
@@ -522,6 +619,32 @@ async def test_addon_http_errors_become_structured_results():
     assert result["success"] is False
     assert "404" in result["error"]
     assert client.calls[0]["path"] == "/api/addons/x/1/missing"
+
+
+@pytest.mark.asyncio
+async def test_addon_malformed_json_becomes_structured_result():
+    class MalformedJsonClient(FakeRestClient):
+        async def request(self, method, path, **kwargs):
+            await super().request(method, path, **kwargs)
+            raise ValueError("Expecting value: line 1 column 1 (char 0)")
+
+    tool = AddonTool(
+        name="broken",
+        description="",
+        parameters={},
+        endpoint=AddonToolEndpoint(method="GET", path="/api/addons/x/1/b"),
+        addon_name="x",
+        addon_version="1",
+        namespace="x",
+    )
+    provider = AddonToolProvider(
+        [tool], MalformedJsonClient({("GET", "/api/addons/x/1/b"): {}})
+    )
+
+    result = await provider.execute_tool("x_broken", {})
+
+    assert result["success"] is False
+    assert "malformed JSON" in result["error"]
 
 
 @pytest.mark.asyncio

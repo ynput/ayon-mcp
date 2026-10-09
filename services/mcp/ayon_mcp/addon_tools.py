@@ -43,18 +43,6 @@ class AddonToolProvider:
     def _resolve_client(self) -> RestApiClient:
         return self._client or get_global_rest_client()
 
-    def has_tool(self, tool_name: str) -> bool:
-        """Check if a tool exists in this provider."""
-        return tool_name in self._tools
-
-    def get_tool(self, tool_name: str) -> AddonTool | None:
-        """Get a tool by name."""
-        return self._tools.get(tool_name)
-
-    def all_tools(self) -> list[AddonTool]:
-        """Return all registered addon tools."""
-        return list(self._tools.values())
-
     async def execute_tool(
         self,
         tool_name: str,

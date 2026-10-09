@@ -224,20 +224,33 @@ class AyonDynamicToolProvider(BaseDynamicToolProvider[AyonTool]):
                 ),
             }
 
-        # Handle addon tools via addon provider
         if tool.is_addon_tool:
             if self._addon_provider is None:
                 return {
                     "success": False,
                     "error": "Addon tool provider not configured.",
                 }
-            return await self._addon_provider.execute_tool(tool_name, arguments)
+            return await self._addon_provider.execute_tool(
+                tool_name, arguments
+            )
 
-        # Handle curated tools with function
+        return await self._run_curated_tool(tool, arguments)
+
+    @staticmethod
+    async def _run_curated_tool(
+        tool: AyonTool,
+        arguments: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Call a curated tool function and wrap its outcome.
+
+        Returns:
+            A structured success result or the raised error message.
+
+        """
         if tool.function is None:
             return {
                 "success": False,
-                "error": f"Tool '{tool_name}' has no executable function.",
+                "error": f"Tool '{tool.name}' has no executable function.",
             }
 
         try:

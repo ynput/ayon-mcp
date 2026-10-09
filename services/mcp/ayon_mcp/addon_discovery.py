@@ -6,11 +6,13 @@ import asyncio
 import logging
 import posixpath
 from dataclasses import dataclass
+from http import HTTPStatus
 from typing import Any
 
 import httpx
 
 from .rest_client import RestApiClient
+from .tool_discovery import MUTATING_HTTP_METHODS
 
 logger = logging.getLogger(__name__)
 
@@ -38,12 +40,12 @@ class AddonTool:
 
     @property
     def full_name(self) -> str:
-        """Return the namespaced tool name."""
+        """The namespaced tool name."""
         return f"{self.namespace}_{self.name}"
 
     @property
     def requires_confirmation(self) -> bool:
-        """Return True if this tool mutates data.
+        """Whether this tool mutates data.
 
         An explicit ``readOnly`` flag from the addon wins. Without it the
         HTTP method decides, so a POST used for a read-only query must be
@@ -51,10 +53,7 @@ class AddonTool:
         """
         if self.read_only is not None:
             return not self.read_only
-        return self.endpoint.method.upper() in MUTATING_METHODS
-
-
-MUTATING_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
+        return self.endpoint.method.upper() in MUTATING_HTTP_METHODS
 
 
 def allowed_endpoint_prefix(addon_name: str, addon_version: str) -> str:
@@ -130,7 +129,7 @@ async def fetch_addon_mcp_tools(
             return response
     except httpx.HTTPStatusError as exc:
         status = exc.response.status_code
-        if status == 404:
+        if status == HTTPStatus.NOT_FOUND:
             logger.debug(
                 "Addon %s/%s does not expose MCP tools",
                 addon_name,
@@ -230,7 +229,7 @@ async def _discover_one_addon(
     addon_name: str,
     version: str,
     api_key: str,
-    timeout: float,
+    timeout: float,  # ruff: ignore[async-function-with-timeout]
 ) -> list[AddonTool]:
     try:
         mcp_spec = await asyncio.wait_for(
@@ -262,7 +261,7 @@ async def _discover_one_addon(
 async def discover_addon_tools(
     client: RestApiClient,
     api_key: str = "",
-    timeout: float = 10.0,
+    timeout: float = 10.0,  # ruff: ignore[async-function-with-timeout]
 ) -> list[AddonTool]:
     """Discover MCP tools from all installed addons.
 
@@ -340,7 +339,7 @@ def discover_addon_tools_sync(
             "Addon MCP tool discovery failed for %s: %s", base_url, exc
         )
         return []
-    except Exception as exc:  # ruff: ignore[blind-except]
+    except Exception:
         # Discovery must never prevent the MCP server from starting.
-        logger.exception("Addon MCP tool discovery crashed: %s", exc)
+        logger.exception("Addon MCP tool discovery crashed")
         return []

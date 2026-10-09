@@ -125,20 +125,12 @@ class AddonToolProvider:
                     f"{detail}"
                 ),
             }
-        except httpx.HTTPError as exc:
+        except (httpx.HTTPError, ValueError) as exc:
+            # RestApiClient raises ValueError for malformed JSON bodies.
             logger.warning("Addon tool %s request failed: %s", tool_name, exc)
             return {
                 "success": False,
                 "error": f"Addon tool request failed: {exc}",
-            }
-        except ValueError as exc:
-            # RestApiClient raises ValueError for malformed JSON bodies.
-            logger.warning(
-                "Addon tool %s returned malformed JSON: %s", tool_name, exc
-            )
-            return {
-                "success": False,
-                "error": f"Addon endpoint returned malformed JSON: {exc}",
             }
 
         return {"success": True, "result": response}

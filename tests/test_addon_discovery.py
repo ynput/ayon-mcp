@@ -644,7 +644,7 @@ async def test_addon_malformed_json_becomes_structured_result():
     result = await provider.execute_tool("x_broken", {})
 
     assert result["success"] is False
-    assert "malformed JSON" in result["error"]
+    assert "Expecting value" in result["error"]
 
 
 @pytest.mark.asyncio

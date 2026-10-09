@@ -22,3 +22,4 @@ services/mcp/ayon_mcp/tools/openapi_generated/*
 
 # LLM agent test reports
 tests/reports/
+.idea/

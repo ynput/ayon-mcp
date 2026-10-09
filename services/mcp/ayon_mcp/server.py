@@ -208,7 +208,7 @@ def create_mcp_server(base_url: str, api_key: str) -> FastMCP:
     if tools_module.tool_exposure_mode() == "direct":
         register_tools(mcp, tools)
     else:
-        register_tools(mcp, create_discovery_tools(tools))
+        register_tools(mcp, create_discovery_tools(tools, base_url))
 
     return mcp
 

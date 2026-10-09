@@ -127,14 +127,17 @@ def classify_side_effects(
     return {tool.name: tool.side_effect for tool in tools}
 
 
-def _ayon_server_hostname() -> str | None:
-    base_url = os.getenv("AYON_SERVER_URL", "")
-    hostname = urlparse(base_url).hostname
-    return hostname or None
-
-
-def build_guard_chain(tools: list[AyonTool]) -> GuardChain | None:
+def build_guard_chain(
+    tools: list[AyonTool],
+    server_url: str | None = None,
+) -> GuardChain | None:
     """Build the guard chain applied to every AYON tool call.
+
+    Args:
+        tools: The catalogued AYON tools the chain guards.
+        server_url: The AYON server URL the MCP server talks to. Its
+            hostname becomes the network allowlist; without it, URL
+            arguments are not fenced to a single host.
 
     Returns:
         A configured ``GuardChain`` for the ``AYON_MCP_GUARDS`` profile
@@ -165,10 +168,10 @@ def build_guard_chain(tools: list[AyonTool]) -> GuardChain | None:
         )
     )
 
-    hostname = _ayon_server_hostname()
+    hostname = urlparse(server_url or "").hostname
     network = NetworkPolicyGuard(
         NetworkPolicyConfig(
-            # AYON_SERVER_URL is routinely localhost or a private IP in
+            # The AYON server URL is routinely localhost or a private IP in
             # dev/on-prem deployments - that's the intended target, not the
             # SSRF this guard defends against. The allowlist (when a
             # hostname is known) is the real fence: only argument values

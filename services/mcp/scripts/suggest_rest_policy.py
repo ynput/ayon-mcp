@@ -175,11 +175,11 @@ def classify(
 ) -> dict[str, Any]:
     """Ask the model to classify one operation.
 
+    The answer is checked by ``_validate_answer``, which raises if it
+    doesn't match ``RESPONSE_SCHEMA``.
+
     Returns:
         ``{"side_effect": ..., "admin": ..., "reason": ...}``.
-
-    Raises:
-        ValueError: If the model's answer doesn't match the schema.
 
     """
     prompt = (
@@ -203,14 +203,44 @@ def classify(
     )
     response.raise_for_status()
     answer = json.loads(response.json()["message"]["content"])
-    side_effect = answer.get("side_effect")
+    return _validate_answer(answer)
+
+
+def _validate_answer(answer: object) -> dict[str, Any]:
+    """Check a model answer against ``RESPONSE_SCHEMA``.
+
+    Ollama's ``format`` constrains generation but isn't a guarantee, so
+    nothing is coerced: ``"false"`` must not turn into ``True``.
+
+    Returns:
+        The answer, with ``reason`` stripped.
+
+    Raises:
+        TypeError: If the answer or one of its fields has the wrong type.
+        ValueError: If a field is missing or ``side_effect`` is unknown.
+
+    """
+    if not isinstance(answer, dict):
+        msg = f"expected a JSON object, got {answer!r}"
+        raise TypeError(msg)
+    missing = [key for key in RESPONSE_SCHEMA["required"] if key not in answer]
+    if missing:
+        msg = f"answer is missing {missing}: {answer!r}"
+        raise ValueError(msg)
+    side_effect = answer["side_effect"]
     if side_effect not in {cls.value for cls in SIDE_EFFECT_RANK}:
         msg = f"unexpected side_effect {side_effect!r}"
         raise ValueError(msg)
+    if not isinstance(answer["admin"], bool):
+        msg = f"admin must be a boolean, got {answer['admin']!r}"
+        raise TypeError(msg)
+    if not isinstance(answer["reason"], str):
+        msg = f"reason must be a string, got {answer['reason']!r}"
+        raise TypeError(msg)
     return {
         "side_effect": side_effect,
-        "admin": bool(answer.get("admin")),
-        "reason": str(answer.get("reason") or "").strip(),
+        "admin": answer["admin"],
+        "reason": answer["reason"].strip(),
     }
 
 

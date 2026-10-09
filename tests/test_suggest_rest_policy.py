@@ -119,6 +119,42 @@ def test_classify_rejects_unknown_side_effect() -> None:
         )
 
 
+@pytest.mark.parametrize(
+    ("answer", "error", "match"),
+    [
+        (
+            {"side_effect": "write", "admin": "false", "reason": ""},
+            TypeError,
+            "admin",
+        ),
+        ({"side_effect": "write", "admin": False}, ValueError, "missing"),
+        (
+            {"side_effect": "write", "admin": False, "reason": 1},
+            TypeError,
+            "reason",
+        ),
+        (["write", False, ""], TypeError, "JSON object"),
+    ],
+)
+def test_classify_rejects_malformed_answer(
+    answer: object, error: type[Exception], match: str
+) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200, json={"message": {"content": json.dumps(answer)}}
+        )
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+
+    with pytest.raises(error, match=match):
+        classify(
+            client,
+            host="http://ollama",
+            model="m",
+            operation=Operation("GET", "/api/x", "", ""),
+        )
+
+
 def test_suggest_uses_cache_without_calling_model() -> None:
     operation = Operation("POST", "/api/query", "Query", "")
     cache = {
@@ -159,5 +195,5 @@ def test_model_agrees_with_reviewed_overrides(
 
     disagreements = [s for s in suggestions if s.direction is not None]
     if disagreements:
-        warnings.warn(format_report(disagreements), stacklevel=1)
+        warnings.warn(format_report(suggestions), stacklevel=1)
     assert len(suggestions) == len(operations)

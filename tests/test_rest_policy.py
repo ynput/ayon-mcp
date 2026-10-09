@@ -72,6 +72,14 @@ def test_overrides_take_precedence_over_method() -> None:
         side_effect_for("POST", "/api/system/restart")
         is SideEffectClass.DESTRUCTIVE
     )
+    assert (
+        side_effect_for("POST", "/api/users/passwordReset")
+        is SideEffectClass.DESTRUCTIVE
+    )
+    assert (
+        side_effect_for("POST", "/api/users/acceptInvite")
+        is SideEffectClass.DESTRUCTIVE
+    )
 
 
 @pytest.mark.skipif(not SPEC_PATH.exists(), reason="no local OpenAPI spec")
@@ -102,6 +110,8 @@ def test_every_admin_pattern_matches_an_operation_in_the_spec() -> None:
         ("GET", "/api/users/{user_name}/apikeys", True),
         ("POST", "/api/system/restart", True),
         ("PATCH", "/api/users/{user_name}", True),
+        ("POST", "/api/users/passwordReset", True),
+        ("POST", "/api/users/acceptInvite", True),
         ("GET", "/api/users/{user_name}", False),
         ("GET", "/api/accessGroups/{project_name}", False),
         ("PUT", "/api/accessGroups/{access_group_name}/{project_name}", True),

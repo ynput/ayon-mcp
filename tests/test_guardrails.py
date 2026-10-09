@@ -200,3 +200,28 @@ async def test_unknown_argument_is_rejected_by_schema_guard() -> None:
 
     assert result["success"] is False
     assert "extra_bogus_arg" in result["error"]
+
+
+def fetch_url(url: str) -> dict[str, str]:
+    """Fetch a URL."""
+    return {"url": url}
+
+
+@pytest.mark.asyncio
+async def test_network_allowlist_uses_passed_server_url() -> None:
+    # AYON_SERVER_URL is unset (autouse fixture), as with ``--host``.
+    provider = AyonDynamicToolProvider(
+        create_curated_tools([fetch_url]),
+        server_url="http://ayon.example.com:5000",
+    )
+
+    allowed = await provider.call_tool(
+        "fetch_url", {"url": "http://ayon.example.com:5000/api/info"}
+    )
+    blocked = await provider.call_tool(
+        "fetch_url", {"url": "http://evil.example.org/steal"}
+    )
+
+    assert allowed["success"] is True
+    assert blocked["success"] is False
+    assert "evil.example.org" in blocked["error"]

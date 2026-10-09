@@ -93,6 +93,9 @@ SIDE_EFFECT_OVERRIDES: dict[tuple[str, str], SideEffectClass] = {
     # Overwrites the previous value with no history.
     ("PUT", "/api/secrets/{secret_name}"): SideEffectClass.DESTRUCTIVE,
     ("PATCH", "/api/users/{user_name}/password"): SideEffectClass.DESTRUCTIVE,
+    ("POST", "/api/users/passwordReset"): SideEffectClass.DESTRUCTIVE,
+    # Sets the invited account's password and logs it in.
+    ("POST", "/api/users/acceptInvite"): SideEffectClass.DESTRUCTIVE,
 }
 
 _ANY = None
@@ -118,6 +121,7 @@ ADMIN_PATTERNS: tuple[AdminPattern, ...] = tuple(
         (_ANY, r"^/api/users/\{user_name\}/sessions(/|$)"),
         (_ANY, r"^/api/users/\{user_name\}/(password|checkPassword)$"),
         (_ANY, r"^/api/users/passwordReset"),
+        (_ANY, r"^/api/users/acceptInvite$"),
         (_ANY, r"^/api/users/\{user_name\}/(accessGroups|rename|invite)$"),
         (_WRITES, r"^/api/users/\{user_name\}$"),
         (_WRITES, r"^/api/accessGroups/"),

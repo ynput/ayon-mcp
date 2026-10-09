@@ -58,9 +58,11 @@ Goals:
 - Classify every tool (curated + generated OpenAPI) by side effect
   (`read_only` / `write` / `destructive`) and gate execution on that
   classification plus the configured guard profile (`default`/`strict`).
-- Constrain the REST gateway tools to `AYON_SERVER_URL` only.
-- Cap output size and redact obvious secrets in tool results before they
-  reach the model.
+- Constrain the REST gateway tools to the configured AYON server host only.
+- Cap output size, and flag obvious secrets in tool arguments and results.
+  Flagging is warning-only, not redaction: addon settings (e.g.
+  ayon-shotgrid) legitimately contain secret-shaped values, and blocking or
+  rewriting them would break `get_addon_settings`/`set_addon_settings`.
 - Keep the existing `call_ayon_tool(tool_name, arguments, confirm_mutation)`
   contract stable — this is additive policy underneath it, not a new
   client-facing API.
@@ -131,7 +133,9 @@ allowed at all right now, independent of what any individual caller claims.
 ### 3.2 Guard chain composition
 
 ```python
-def build_guard_chain(tools: list[AyonTool]) -> GuardChain:
+def build_guard_chain(
+    tools: list[AyonTool], server_url: str | None = None
+) -> GuardChain:
     classifications = classify_side_effects(tools)  # 3.3
 
     if read_only_enabled():
@@ -146,17 +150,24 @@ def build_guard_chain(tools: list[AyonTool]) -> GuardChain:
         explicit_classifications=classifications,
     ))
 
+    # server_url is the base URL the server was created with (``--host`` or
+    # AYON_SERVER_URL), passed down from create_mcp_server - not re-read
+    # from the environment, which may not hold it.
+    hostname = urlparse(server_url or "").hostname
     network = NetworkPolicyGuard(NetworkPolicyConfig(
-        allowed_domains={urlparse(ayon_server_url()).hostname},
-        require_https=ayon_server_url().startswith("https://"),
+        allowed_domains={hostname} if hostname else None,
+        block_localhost=False,
         block_private_ips=False,  # local/dev AYON servers are routinely private-IP
+        block_metadata_ips=True,
     ))
 
     return GuardChain([
         ("schema", SchemaStrictnessGuard()),
         ("side_effect", side_effect),
         ("network", network),
-        ("sensitive_output", SensitiveDataGuard()),
+        ("sensitive_output", SensitiveDataGuard(SensitiveDataConfig(
+            mode=EnforcementLevel.WARN,  # warn only - see goals
+        ))),
         ("output_size", OutputSizeGuard(OutputSizeConfig(max_bytes=..., mode=TruncationMode.TRUNCATE))),
         ("concurrency", ConcurrencyGuard()),
         ("per_tool", PerToolGuard()),

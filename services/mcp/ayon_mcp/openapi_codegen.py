@@ -273,6 +273,7 @@ def _build_function_source(op: Operation) -> str:
         def_line = f"async def {op.operation_id}() -> Any:"
 
     lines = [
+        f"@endpoint({op.method!r}, {op.path!r})",
         def_line,
         f'    """{_build_docstring(op)}"""',
         f"    {path_block}",
@@ -305,7 +306,7 @@ def _build_module_source(operations: list[Operation]) -> str:
         "",
         "from typing import Any",
         "",
-        "from ._runtime import call_openapi",
+        "from ._runtime import call_openapi, endpoint",
         "",
         function_defs,
         "__all__ = [",
@@ -321,10 +322,26 @@ def _runtime_source() -> str:
 
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from urllib.parse import quote
 
 from ayon_mcp.rest_client import get_global_rest_client
+from ayon_mcp.rest_policy import HTTP_METHOD_ATTR, HTTP_PATH_ATTR
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
+
+def endpoint(
+    method: str, path: str
+) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
+    """Tag a generated tool with the REST endpoint it calls."""
+    def decorate(function: Callable[..., Any]) -> Callable[..., Any]:
+        setattr(function, HTTP_METHOD_ATTR, method)
+        setattr(function, HTTP_PATH_ATTR, path)
+        return function
+
+    return decorate
 
 
 def _drop_none(values: dict[str, Any]) -> dict[str, Any]:

@@ -35,3 +35,9 @@ Safety rules:
 - For bulk operations, verify scope and intent because changes can affect
   production data.
 """
+
+READ_ONLY_INSTRUCTIONS = """\
+This server runs in read-only mode (AYON_MCP_READ_ONLY): no tool that
+changes AYON data is available. If the user asks for a change, explain that
+it can't be made through this server instead of looking for a workaround.
+"""

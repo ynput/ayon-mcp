@@ -58,7 +58,6 @@ Goals:
 - Classify every tool (curated + generated OpenAPI) by side effect
   (`read_only` / `write` / `destructive`) and gate execution on that
   classification plus the configured guard profile (`default`/`strict`).
-- Constrain the REST gateway tools to the configured AYON server host only.
 - Cap output size, and flag obvious secrets in tool arguments and results.
   Flagging is warning-only, not redaction: addon settings (e.g.
   ayon-shotgrid) legitimately contain secret-shaped values, and blocking or
@@ -133,9 +132,7 @@ allowed at all right now, independent of what any individual caller claims.
 ### 3.2 Guard chain composition
 
 ```python
-def build_guard_chain(
-    tools: list[AyonTool], server_url: str | None = None
-) -> GuardChain:
+def build_guard_chain(tools: list[AyonTool]) -> GuardChain:
     classifications = classify_side_effects(tools)  # 3.3
 
     if read_only_enabled():
@@ -150,21 +147,9 @@ def build_guard_chain(
         explicit_classifications=classifications,
     ))
 
-    # server_url is the base URL the server was created with (``--host`` or
-    # AYON_SERVER_URL), passed down from create_mcp_server - not re-read
-    # from the environment, which may not hold it.
-    hostname = urlparse(server_url or "").hostname
-    network = NetworkPolicyGuard(NetworkPolicyConfig(
-        allowed_domains={hostname} if hostname else None,
-        block_localhost=False,
-        block_private_ips=False,  # local/dev AYON servers are routinely private-IP
-        block_metadata_ips=True,
-    ))
-
     return GuardChain([
         ("schema", SchemaStrictnessGuard()),
         ("side_effect", side_effect),
-        ("network", network),
         ("sensitive_output", SensitiveDataGuard(SensitiveDataConfig(
             mode=EnforcementLevel.WARN,  # warn only - see goals
         ))),
@@ -175,7 +160,7 @@ def build_guard_chain(
 ```
 
 Ordering rationale: cheap structural checks (`schema`) before policy
-(`side_effect`, `network`) before anything that needs to run alongside
+(`side_effect`) before anything that needs to run alongside
 execution (`concurrency`). `sensitive_output`/`output_size` are the two that
 also register for `check_output_all` (post-execution).
 
@@ -199,6 +184,19 @@ Guards *not* included, and why:
   rather than ayon-mcp's baseline.
 - `PreconditionGuard`, `SaturationGuard`, `AssumptionTraceGuard` — built for
   math/stats tool chains, no AYON equivalent.
+- `NetworkPolicyGuard` — it treats every argument under a URL-ish key
+  (`url`, `target`, `link`, `host`, `server`, ...) and every `http(s)://`
+  value at any depth as an outbound request target. In ayon-mcp no tool
+  argument is one: `RestApiClient` always talks to its fixed base URL and
+  generated tools only fill `quote()`-encoded path parameters, so arguments
+  are data sent *to* AYON. A host allowlist therefore blocked legitimate
+  calls (an entity attribute named `target`, Deadline URLs in
+  `set_addon_settings`, an external `url` for `upload_addon_zip_file`)
+  without closing any SSRF path in this process. The few endpoints where
+  the AYON server itself fetches an argument URL (addon zip upload,
+  installers, dependency packages) are admin endpoints, hidden unless
+  `AYON_MCP_ADMIN_TOOLS` is set. Gap #2 is covered by side-effect
+  classification instead.
 - `ProvenanceGuard`, `ContractGuard` — would need `ToolContract` metadata
   attached to every `AyonTool`; out of scope until there's a concrete need
   for output lineage tracking.

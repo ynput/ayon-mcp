@@ -13,14 +13,11 @@ import logging
 import os
 from enum import StrEnum
 from typing import TYPE_CHECKING
-from urllib.parse import urlparse
 
 from chuk_tool_processor.guards import (
     EnforcementLevel,
     ExecutionMode,
     GuardChain,
-    NetworkPolicyConfig,
-    NetworkPolicyGuard,
     OutputSizeConfig,
     OutputSizeGuard,
     RetrySafetyConfig,
@@ -127,17 +124,8 @@ def classify_side_effects(
     return {tool.name: tool.side_effect for tool in tools}
 
 
-def build_guard_chain(
-    tools: list[AyonTool],
-    server_url: str | None = None,
-) -> GuardChain | None:
+def build_guard_chain(tools: list[AyonTool]) -> GuardChain | None:
     """Build the guard chain applied to every AYON tool call.
-
-    Args:
-        tools: The catalogued AYON tools the chain guards.
-        server_url: The AYON server URL the MCP server talks to. Its
-            hostname becomes the network allowlist; without it, URL
-            arguments are not fenced to a single host.
 
     Returns:
         A configured ``GuardChain`` for the ``AYON_MCP_GUARDS`` profile
@@ -168,21 +156,6 @@ def build_guard_chain(
         )
     )
 
-    hostname = urlparse(server_url or "").hostname
-    network = NetworkPolicyGuard(
-        NetworkPolicyConfig(
-            # The AYON server URL is routinely localhost or a private IP in
-            # dev/on-prem deployments - that's the intended target, not the
-            # SSRF this guard defends against. The allowlist (when a
-            # hostname is known) is the real fence: only argument values
-            # pointing at AYON's own host are allowed through.
-            allowed_domains={hostname} if hostname else None,
-            block_localhost=False,
-            block_private_ips=False,
-            block_metadata_ips=True,
-        )
-    )
-
     sensitive_data = SensitiveDataGuard(
         SensitiveDataConfig(
             # WARN, not BLOCK: addon settings (e.g. ayon-shotgrid) can
@@ -207,7 +180,6 @@ def build_guard_chain(
         [
             ("schema", SchemaStrictnessGuard(get_schema=get_schema)),
             ("side_effect", side_effect),
-            ("network", network),
             ("sensitive_data", sensitive_data),
             ("output_size", output_size),
         ]

@@ -202,26 +202,29 @@ async def test_unknown_argument_is_rejected_by_schema_guard() -> None:
     assert "extra_bogus_arg" in result["error"]
 
 
-def fetch_url(url: str) -> dict[str, str]:
-    """Fetch a URL."""
-    return {"url": url}
+
+def update_entity(data: dict[str, object]) -> dict[str, object]:
+    """Update an entity."""
+    return data
 
 
 @pytest.mark.asyncio
-async def test_network_allowlist_uses_passed_server_url() -> None:
-    # AYON_SERVER_URL is unset (autouse fixture), as with ``--host``.
-    provider = AyonDynamicToolProvider(
-        create_curated_tools([fetch_url]),
-        server_url="http://ayon.example.com:5000",
+@pytest.mark.parametrize(
+    "data",
+    [
+        # Keys chuk's NetworkPolicyGuard treats as URLs, holding non-URLs.
+        {"target": "reference", "link": "shot010"},
+        # URL values pointing outside AYON, e.g. Deadline addon settings.
+        {"deadline_urls": [{"name": "default", "value": "http://deadline:8082"}]},
+    ],
+)
+async def test_url_shaped_arguments_are_not_blocked(
+    data: dict[str, object],
+) -> None:
+    provider = AyonDynamicToolProvider(create_curated_tools([update_entity]))
+
+    result = await provider.call_tool(
+        "update_entity", {"data": data, "confirm_mutation": True}
     )
 
-    allowed = await provider.call_tool(
-        "fetch_url", {"url": "http://ayon.example.com:5000/api/info"}
-    )
-    blocked = await provider.call_tool(
-        "fetch_url", {"url": "http://evil.example.org/steal"}
-    )
-
-    assert allowed["success"] is True
-    assert blocked["success"] is False
-    assert "evil.example.org" in blocked["error"]
+    assert result == {"success": True, "result": data}

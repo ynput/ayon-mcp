@@ -180,7 +180,7 @@ endpoint, so server-side validation, permissions and events all apply.
 
 Every call routed through the discovery surface also passes through a
 [chuk-tool-processor](https://pypi.org/project/chuk-tool-processor/) guard
-chain (schema validation, side-effect gating, network policy, sensitive-data
+chain (schema validation, side-effect gating, sensitive-data
 and output-size checks) before it reaches AYON. See
 [`docs/design/guardrails.md`](docs/design/guardrails.md) for the design.
 

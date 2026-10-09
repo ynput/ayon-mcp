@@ -159,7 +159,6 @@ class AyonDynamicToolProvider(BaseDynamicToolProvider[AyonTool]):
         self,
         tools: list[AyonTool],
         guard_chain: GuardChain | object | None = _DEFAULT,
-        server_url: str | None = None,
     ) -> None:
         """Initialize the provider with its available AYON tools.
 
@@ -171,9 +170,6 @@ class AyonDynamicToolProvider(BaseDynamicToolProvider[AyonTool]):
                 ``AYON_MCP_GUARDS=off``). Pass ``None`` explicitly to skip
                 guardrails regardless of env. ``AYON_MCP_READ_ONLY`` is
                 enforced either way.
-            server_url: The AYON server URL, used for the default guard
-                chain's network allowlist. Ignored when ``guard_chain`` is
-                passed explicitly.
 
         """
         super().__init__()
@@ -181,7 +177,7 @@ class AyonDynamicToolProvider(BaseDynamicToolProvider[AyonTool]):
         self._tools_by_name = {tool.name: tool for tool in tools}
         self._read_only = read_only_enabled()
         self._guard_chain = (
-            build_guard_chain(tools, server_url)
+            build_guard_chain(tools)
             if guard_chain is _DEFAULT
             else guard_chain
         )
@@ -355,22 +351,14 @@ class AyonDynamicToolProvider(BaseDynamicToolProvider[AyonTool]):
 
 def create_discovery_tools(
     functions: list[Callable[..., Any]],
-    server_url: str | None = None,
 ) -> list[Callable[..., Any]]:
     """Create the fixed MCP surface for discovering AYON tools on demand.
-
-    Args:
-        functions: The AYON tool functions to catalogue.
-        server_url: The AYON server URL, for the guard chain's network
-            allowlist.
 
     Returns:
         The five callable MCP discovery tools.
 
     """
-    provider = AyonDynamicToolProvider(
-        create_curated_tools(functions), server_url=server_url
-    )
+    provider = AyonDynamicToolProvider(create_curated_tools(functions))
 
     async def list_ayon_tools(limit: int = 50) -> dict[str, Any]:
         """List AYON tools with concise descriptions.

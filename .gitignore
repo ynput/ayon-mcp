@@ -18,7 +18,6 @@ package/
 # OS
 .DS_Store
 
-services/mcp/ayon_openapi.json
 services/mcp/ayon_mcp/tools/openapi_generated/*
 
 # LLM agent test reports

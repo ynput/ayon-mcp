@@ -51,12 +51,16 @@ class FakeService:
     """Answers each request with a JSON echo of what it received.
 
     With ``stream=True`` it sends one line per ``release`` event instead,
-    forever, so tests can check streaming and cancellation.
+    forever, so tests can check streaming and cancellation. With
+    ``silent=True`` it never answers.
     """
 
-    def __init__(self, url: str, *, stream: bool = False) -> None:
+    def __init__(
+        self, url: str, *, stream: bool = False, silent: bool = False
+    ) -> None:
         self.url = url
         self.stream = stream
+        self.silent = silent
         self.release = asyncio.Event()
         self.cancelled: set[uuid.UUID] = set()
         self._requests: dict[uuid.UUID, dict] = {}
@@ -80,7 +84,7 @@ class FakeService:
                     }
                 elif frame.type is FrameType.REQUEST_BODY:
                     self._requests[frame.stream_id]["body"] += frame.payload
-                elif frame.type is FrameType.REQUEST_END:
+                elif frame.type is FrameType.REQUEST_END and not self.silent:
                     task = asyncio.create_task(
                         self._respond(websocket, frame.stream_id)
                     )
@@ -539,3 +543,21 @@ async def test_bus_upload_to_stuck_service_is_bounded() -> None:
     finally:
         await tunnel.close()
         await hub.shutdown()
+
+
+def test_client_leaving_before_the_response_cancels_the_request() -> None:
+    """The client gives up while the service has not answered yet."""
+
+    async def run() -> None:
+        async with running(FakeWorker()) as worker:
+            service = FakeService(worker.ws_url, silent=True)
+            async with background(service.run()):
+                await worker.wait_for_tunnels()
+                async with httpx.AsyncClient(timeout=0.2) as http:
+                    with pytest.raises(httpx.ReadTimeout):
+                        await http.post(worker.url, content=b"{}")
+                # Well before the response-start timeout.
+                await wait_until(lambda: len(service.cancelled) == 1)
+                assert worker.hub.routes == {}
+
+    asyncio.run(run())

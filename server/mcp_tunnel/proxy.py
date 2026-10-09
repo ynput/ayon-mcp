@@ -69,6 +69,56 @@ def _unavailable() -> Response:
     return response
 
 
+class _ClientGoneError(Exception):
+    """The client disconnected before the service answered."""
+
+
+async def _disconnected(request: Request) -> None:
+    """Return once the client disconnects.
+
+    Only for after the request body is read: the server is not obliged
+    to cancel the handler when the client goes away, so the only sign of
+    it is an ``http.disconnect`` message.
+    """
+    with contextlib.suppress(Exception):
+        if (await request.receive())["type"] == "http.disconnect":
+            return
+    # Anything else (e.g. a middleware replaying the body) can't tell us
+    # about the client: leave it to the response timeout rather than spin.
+    await asyncio.Event().wait()
+
+
+async def _first_frame(request: Request, route: Route) -> Frame | None:
+    """Wait for the service to start answering.
+
+    Returns:
+        The first response frame, or ``None`` if the tunnel closed.
+
+    Raises:
+        TimeoutError: If the service took too long.
+        _ClientGoneError: If the client disconnected first.
+
+    """
+    response = asyncio.ensure_future(route.receive())
+    disconnect = asyncio.ensure_future(_disconnected(request))
+    try:
+        done, _ = await asyncio.wait(
+            {response, disconnect},
+            timeout=RESPONSE_START_TIMEOUT,
+            return_when=asyncio.FIRST_COMPLETED,
+        )
+    finally:
+        # Not awaited: both are safe to abandon, and awaiting here would
+        # be cancelled too if this request is being cancelled.
+        response.cancel()
+        disconnect.cancel()
+    if response in done:
+        return response.result()
+    if disconnect in done:
+        raise _ClientGoneError
+    raise TimeoutError
+
+
 def _service_query(request: Request) -> str:
     """Return the request's query string without credentials.
 
@@ -232,15 +282,17 @@ async def proxy_request(
     proxied = _ProxiedRequest(route)
     try:
         await proxied.forward(request, user_name)
-        first = await asyncio.wait_for(
-            route.receive(), timeout=RESPONSE_START_TIMEOUT
-        )
+        first = await _first_frame(request, route)
     except TunnelClosedError:
         route.close()
         return _error(502, "MCP service disconnected")
     except TimeoutError:
         proxied.cancel()
         return _error(504, "MCP service did not respond")
+    except _ClientGoneError:
+        proxied.cancel()
+        # Nobody reads it; 499 shows up in access logs as "client closed".
+        return _error(499, "Client disconnected")
     except BaseException:
         # The client went away while the request was being forwarded.
         proxied.cancel()

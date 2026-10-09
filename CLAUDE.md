@@ -1,6 +1,6 @@
 # CLAUDE.md
 
-Config via env vars: `AYON_SERVER_URL`, `AYON_API_KEY`, optional `AYON_MCP_READ_ONLY=true`.
+Config via env vars: `AYON_SERVER_URL`, `AYON_API_KEY`.
 
 Integration tests need `AYON_SERVER_URL`/`AYON_API_KEY` set or a `.env` in `tests/`
 (pytest mark `integration`).

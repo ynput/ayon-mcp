@@ -90,18 +90,24 @@ class FakeWorker:
     """One server worker with the MCP addon's endpoints.
 
     ``/ws`` and ``/mcp`` stand in for ``/api/addons/mcp/{version}/ws`` and
-    ``/api/addons/mcp/{version}/mcp``.
+    ``/api/addons/mcp/{version}/mcp``. ``/readyz`` is AYON's readiness
+    probe: while ``ready`` is False the worker is starting, so like AYON
+    it has no addon routes yet and refuses the tunnel with HTTP 403.
     """
 
-    def __init__(self, network: MemoryNetwork | None = None) -> None:
+    def __init__(
+        self, network: MemoryNetwork | None = None, *, readyz: bool = True
+    ) -> None:
         self.network = network or MemoryNetwork()
         self.hub = TunnelHub(MemoryTunnelBus(self.network))
-        self.app = Starlette(
-            routes=[
-                WebSocketRoute("/ws", self._ws),
-                Route("/mcp", self._proxy, methods=["GET", "POST", "DELETE"]),
-            ]
-        )
+        self.ready = True
+        routes = [
+            WebSocketRoute("/ws", self._ws),
+            Route("/mcp", self._proxy, methods=["GET", "POST", "DELETE"]),
+        ]
+        if readyz:
+            routes.append(Route("/readyz", self._readyz))
+        self.app = Starlette(routes=routes)
         self.port = 0
 
     async def _authenticate(self, websocket: WebSocket) -> str:
@@ -110,13 +116,24 @@ class FakeWorker:
         return "service"
 
     async def _ws(self, websocket: WebSocket) -> None:
+        if not self.ready:
+            # Closing before accepting makes uvicorn answer HTTP 403.
+            await websocket.close()
+            return
         await serve_tunnel(websocket, self.hub, self._authenticate)
+
+    async def _readyz(self, _request: Request) -> Response:
+        return Response(status_code=200 if self.ready else 503)
 
     async def _proxy(self, request: Request) -> Response:
         # Stands in for AYON auth: the authenticated user's name.
         return await proxy_request(
             request, self.hub, request.headers.get("x-test-user", "nobody")
         )
+
+    @property
+    def base_url(self) -> str:
+        return f"http://127.0.0.1:{self.port}"
 
     @property
     def url(self) -> str:

@@ -18,7 +18,11 @@ from urllib.parse import urlsplit, urlunsplit
 
 import httpx
 from websockets.asyncio.client import connect
-from websockets.exceptions import ConnectionClosed, InvalidStatus
+from websockets.exceptions import (
+    ConnectionClosed,
+    InvalidHandshake,
+    InvalidStatus,
+)
 
 from .tunnel_protocol import (
     INITIAL_WINDOW,
@@ -321,7 +325,9 @@ class TunnelClient:
                         kind=f"http-{status}",
                     )
                     rejected = True
-            except OSError as exc:
+            except (OSError, InvalidHandshake) as exc:
+                # InvalidHandshake: e.g. the connection closed mid-upgrade
+                # (InvalidMessage) while a proxy or the server restarts.
                 self._problem(
                     f"MCP tunnel connection failed: {exc}",
                     kind="network",

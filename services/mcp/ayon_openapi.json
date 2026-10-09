@@ -2469,7 +2469,7 @@
           },
           "createdAt": {
             "deprecated": false,
-            "example": "2026-10-05T09:21:34.833225",
+            "example": "2026-10-06T15:06:58.036107",
             "format": "date-time",
             "title": "Createdat",
             "type": "string"
@@ -4186,7 +4186,7 @@
           "entityId": {
             "deprecated": false,
             "description": "ID of the entity in the list",
-            "example": "29183744c09e11f18d3f8a852740db7b",
+            "example": "9368a382c19711f1805116112505215f",
             "title": "Entity ID",
             "type": "string"
           },
@@ -4199,7 +4199,7 @@
           },
           "id": {
             "deprecated": false,
-            "example": "291836d6c09e11f18d3f8a852740db7b",
+            "example": "9368a2f6c19711f1805116112505215f",
             "title": "Item ID",
             "type": "string"
           },
@@ -4265,7 +4265,7 @@
           "entityId": {
             "deprecated": false,
             "description": "ID of the entity in the list",
-            "example": "29183744c09e11f18d3f8a852740db7b",
+            "example": "9368a382c19711f1805116112505215f",
             "title": "Entity ID",
             "type": "string"
           },
@@ -4314,13 +4314,13 @@
           "entityId": {
             "deprecated": false,
             "description": "ID of the entity in the list",
-            "example": "29183744c09e11f18d3f8a852740db7b",
+            "example": "9368a382c19711f1805116112505215f",
             "title": "Entity ID",
             "type": "string"
           },
           "id": {
             "deprecated": false,
-            "example": "291836d6c09e11f18d3f8a852740db7b",
+            "example": "9368a2f6c19711f1805116112505215f",
             "title": "Item ID",
             "type": "string"
           },
@@ -4441,7 +4441,7 @@
           },
           "id": {
             "deprecated": false,
-            "example": "2918338ec09e11f18d3f8a852740db7b",
+            "example": "93689c3ec19711f1805116112505215f",
             "title": "ID",
             "type": "string"
           },
@@ -4524,13 +4524,13 @@
           "entityId": {
             "deprecated": false,
             "description": "ID of the entity in the list",
-            "example": "29183744c09e11f18d3f8a852740db7b",
+            "example": "9368a382c19711f1805116112505215f",
             "title": "Entity ID",
             "type": "string"
           },
           "id": {
             "deprecated": false,
-            "example": "291836d6c09e11f18d3f8a852740db7b",
+            "example": "9368a2f6c19711f1805116112505215f",
             "title": "Item ID",
             "type": "string"
           },
@@ -4727,7 +4727,7 @@
           },
           "id": {
             "deprecated": false,
-            "example": "2918338ec09e11f18d3f8a852740db7b",
+            "example": "93689c3ec19711f1805116112505215f",
             "title": "ID",
             "type": "string"
           },
@@ -4818,7 +4818,7 @@
           },
           "id": {
             "deprecated": false,
-            "example": "2918338ec09e11f18d3f8a852740db7b",
+            "example": "93689c3ec19711f1805116112505215f",
             "title": "ID",
             "type": "string"
           },
@@ -6996,7 +6996,7 @@
           },
           "lastSeen": {
             "deprecated": false,
-            "example": "2026-10-05T09:21:38.619710",
+            "example": "2026-10-06T15:07:00.645802",
             "format": "date-time",
             "title": "Last seen time",
             "type": "string"
@@ -8073,12 +8073,12 @@
               {
                 "active": true,
                 "code": "ex",
-                "createdAt": "2026-10-05T09:21:37.867052",
+                "createdAt": "2026-10-06T15:07:00.008220",
                 "library": false,
                 "name": "Example project",
                 "pinned": false,
                 "skeleton": false,
-                "updatedAt": "2026-10-05T09:21:37.867055"
+                "updatedAt": "2026-10-06T15:07:00.008223"
               }
             ],
             "items": {
@@ -12373,7 +12373,7 @@
         "properties": {
           "viewId": {
             "deprecated": false,
-            "example": "2c1c3d1ec09e11f18d3f8a852740db7b",
+            "example": "957adb86c19711f1805116112505215f",
             "pattern": "^[0-9a-f]{32}$",
             "title": "View ID",
             "type": "string"
@@ -32567,7 +32567,7 @@
             }
           },
           {
-            "example": "2c1c4228c09e11f18d3f8a852740db7b",
+            "example": "957ae28ec19711f1805116112505215f",
             "in": "path",
             "name": "view_id",
             "required": true,
@@ -32630,7 +32630,7 @@
             }
           },
           {
-            "example": "2c1c4228c09e11f18d3f8a852740db7b",
+            "example": "957ae28ec19711f1805116112505215f",
             "in": "path",
             "name": "view_id",
             "required": true,
@@ -32695,7 +32695,7 @@
             }
           },
           {
-            "example": "2c1c4228c09e11f18d3f8a852740db7b",
+            "example": "957ae28ec19711f1805116112505215f",
             "in": "path",
             "name": "view_id",
             "required": true,

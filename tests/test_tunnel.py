@@ -9,6 +9,7 @@ the proxied endpoint over HTTP.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import uuid
 from pathlib import Path
 from unittest.mock import MagicMock
@@ -558,6 +559,84 @@ async def test_server_without_tunnel_endpoint_is_reported(
 
 
 @pytest.mark.asyncio
+@pytest.mark.usefixtures("fast_reconnect")
+@pytest.mark.parametrize("readyz", [True, False], ids=["ready", "no-readyz"])
+async def test_ready_server_without_tunnel_endpoint_is_reported(
+    caplog: pytest.LogCaptureFixture, readyz: bool
+) -> None:
+    # A ready server refusing the handshake, or one too old to tell
+    # (no /readyz), still gets the error.
+    async with running(FakeWorker(readyz=readyz)) as worker:
+        client = TunnelClient(
+            _streaming_app,
+            worker.ws_url.replace("/ws", "/no-such-endpoint"),
+            SERVICE_KEY,
+            server_url=worker.base_url,
+        )
+        await _run_rejected(client, seconds=0.5)
+
+    [error] = _tunnel_errors(caplog)
+    assert "no MCP tunnel endpoint there" in error
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("fast_reconnect")
+async def test_starting_server_is_not_an_error(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    caplog.set_level("INFO", logger="ayon_mcp.tunnel")
+    async with running(FakeWorker()) as worker:
+        worker.ready = False
+        client = TunnelClient(
+            _streaming_app,
+            worker.ws_url,
+            SERVICE_KEY,
+            server_url=worker.base_url,
+        )
+        async with background(client.run()):
+            await asyncio.sleep(0.5)
+            assert worker.hub.local_count == 0
+            worker.ready = True
+            await worker.wait_for_tunnels()
+
+    assert not _tunnel_errors(caplog)
+    starting = [
+        record
+        for record in caplog.records
+        if "probably starting up" in record.getMessage()
+    ]
+    # Retried several times, reported once.
+    assert [record.levelname for record in starting] == ["INFO"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("fast_reconnect")
+async def test_server_going_away_after_connecting_is_a_warning(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    caplog.set_level("INFO", logger="ayon_mcp.tunnel")
+    server = running(FakeWorker())
+    worker = await server.__aenter__()
+    client = TunnelClient(_streaming_app, worker.ws_url, SERVICE_KEY)
+    async with background(client.run()):
+        await wait_until(
+            lambda: any(
+                "MCP tunnel connected to" in record.getMessage()
+                for record in caplog.records
+            )
+        )
+        await server.__aexit__(None, None, None)
+        await wait_until(
+            lambda: any(
+                "MCP tunnel connection failed" in record.getMessage()
+                for record in caplog.records
+            )
+        )
+
+    assert not _tunnel_errors(caplog)
+
+
+@pytest.mark.asyncio
 async def test_remote_stream_gets_credit_through_the_bus() -> None:
     """A response bigger than the window, tunnel on another worker."""
     size = 3 * tunnel_protocol.INITIAL_WINDOW + 5
@@ -580,3 +659,39 @@ async def test_remote_stream_gets_credit_through_the_bus() -> None:
 
     assert response.status_code == 200
     assert len(response.content) == size
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("fast_reconnect")
+async def test_connection_closed_during_handshake_is_retried(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """E.g. an ingress dropping the connection while the server restarts."""
+    attempts = 0
+
+    async def drop(
+        reader: asyncio.StreamReader, writer: asyncio.StreamWriter
+    ) -> None:
+        nonlocal attempts
+        attempts += 1
+        await reader.readuntil(b"\r\n\r\n")
+        writer.write(b"HTTP/1.1 101 Switching")  # cut off mid-response
+        writer.close()
+
+    server = await asyncio.start_server(drop, "127.0.0.1", 0)
+    port = server.sockets[0].getsockname()[1]
+    async with server:
+        client = TunnelClient(
+            _streaming_app, f"ws://127.0.0.1:{port}/ws", SERVICE_KEY
+        )
+        task = asyncio.create_task(client.run())
+        try:
+            await wait_until(lambda: attempts >= 3)
+            assert not task.done()
+        finally:
+            task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await task
+
+    [error] = _tunnel_errors(caplog)
+    assert "MCP tunnel connection failed" in error

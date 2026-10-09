@@ -5,9 +5,11 @@ from __future__ import annotations
 import asyncio
 import logging
 import posixpath
+import re
 from dataclasses import dataclass
 from http import HTTPStatus
 from typing import Any
+from urllib.parse import unquote
 
 import httpx
 
@@ -15,6 +17,11 @@ from .rest_client import RestApiClient
 from .tool_discovery import MUTATING_HTTP_METHODS
 
 logger = logging.getLogger(__name__)
+
+SUPPORTED_HTTP_METHODS = frozenset({"GET", *MUTATING_HTTP_METHODS})
+# MCP tool names: ^[a-zA-Z0-9_-]{1,64}$ (applies to the namespaced name).
+_TOOL_NAME_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
+_MAX_DECODE_ROUNDS = 3
 
 
 @dataclass
@@ -61,18 +68,39 @@ def allowed_endpoint_prefix(addon_name: str, addon_version: str) -> str:
     return f"/api/addons/{addon_name}/{addon_version}/"
 
 
+def _canonical_path(path: str) -> str:
+    """Percent-decode ``path`` until it stops changing.
+
+    Servers and proxies decode before routing, so ``..%2F`` or ``%252e%252e``
+    must be judged in their decoded form.
+
+    Returns:
+        The decoded path.
+
+    """
+    decoded = path
+    for _ in range(_MAX_DECODE_ROUNDS):
+        next_value = unquote(decoded)
+        if next_value == decoded:
+            break
+        decoded = next_value
+    return decoded
+
+
 def is_within_prefix(path: str, prefix: str) -> bool:
     """Return True if ``path`` stays under ``prefix`` after normalisation.
 
-    Rejects ``..`` segments outright so a template such as
-    ``/api/addons/x/1.0/../../users`` cannot escape the addon even when the
-    HTTP client normalises the URL.
+    The check runs on the fully percent-decoded path and rejects ``..``
+    segments and backslashes outright, so neither a template such as
+    ``/api/addons/x/1.0/../../users`` nor an encoded argument such as
+    ``..%2F..%2Fusers`` can escape the addon once a server decodes it.
     """
-    if not path.startswith("/"):
+    decoded = _canonical_path(path)
+    if not decoded.startswith("/") or "\\" in decoded:
         return False
-    if ".." in path.split("/"):
+    if ".." in decoded.split("/"):
         return False
-    normalised = posixpath.normpath(path)
+    normalised = posixpath.normpath(decoded)
     return normalised.startswith(prefix)
 
 
@@ -153,12 +181,87 @@ async def fetch_addon_mcp_tools(
     return None
 
 
+def _parse_endpoint(
+    endpoint_def: Any,  # ruff: ignore[any-type]
+    addon_version: str,
+    prefix: str,
+) -> AddonToolEndpoint | str:
+    """Validate an endpoint definition.
+
+    Returns:
+        The endpoint, or a human-readable reason why it was rejected.
+
+    """
+    if not isinstance(endpoint_def, dict):
+        return "endpoint is not an object"
+    method = endpoint_def.get("method", "GET")
+    if (
+        not isinstance(method, str)
+        or method.upper() not in SUPPORTED_HTTP_METHODS
+    ):
+        return f"unsupported method {method!r}"
+    path = endpoint_def.get("path", "")
+    if not isinstance(path, str):
+        return "endpoint path is not a string"
+    path = path.replace("{version}", addon_version)
+    if not is_within_prefix(path, prefix):
+        return f"endpoint {path!r} is outside {prefix!r}"
+    return AddonToolEndpoint(method=method.upper(), path=path)
+
+
+def _parse_tool(
+    tool_def: Any,  # ruff: ignore[any-type]
+    namespace: str,
+    addon_name: str,
+    addon_version: str,
+) -> AddonTool | None:
+    """Validate a single tool definition, logging why it was skipped.
+
+    Returns:
+        The parsed tool, or None when the definition is unusable.
+
+    """
+    if not isinstance(tool_def, dict):
+        logger.warning("Skipping addon %s tool: not an object", addon_name)
+        return None
+    name = tool_def.get("name")
+    full_name = f"{namespace}_{name}"
+    if not isinstance(name, str) or not _TOOL_NAME_RE.match(full_name):
+        logger.warning(
+            "Skipping addon %s tool %r: invalid tool name", addon_name, name
+        )
+        return None
+
+    prefix = allowed_endpoint_prefix(addon_name, addon_version)
+    endpoint = _parse_endpoint(tool_def.get("endpoint"), addon_version, prefix)
+    if isinstance(endpoint, str):
+        logger.warning("Skipping addon tool %s: %s", full_name, endpoint)
+        return None
+
+    description = tool_def.get("description", "")
+    parameters = tool_def.get("parameters", {})
+    read_only = tool_def.get("readOnly")
+    return AddonTool(
+        name=name,
+        description=description if isinstance(description, str) else "",
+        parameters=parameters if isinstance(parameters, dict) else {},
+        endpoint=endpoint,
+        addon_name=addon_name,
+        addon_version=addon_version,
+        namespace=namespace,
+        read_only=read_only if isinstance(read_only, bool) else None,
+    )
+
+
 def parse_addon_tools(
     mcp_spec: dict[str, Any],
     addon_name: str,
     addon_version: str,
 ) -> list[AddonTool]:
     """Parse MCP tool definitions from addon spec.
+
+    Malformed entries are skipped with a warning instead of failing the
+    whole addon, and a malformed ``tools`` collection yields no tools.
 
     Args:
         mcp_spec: The MCP tools spec from the addon.
@@ -169,47 +272,23 @@ def parse_addon_tools(
         List of parsed AddonTool instances.
 
     """
-    namespace = mcp_spec.get("namespace", addon_name)
-    prefix = allowed_endpoint_prefix(addon_name, addon_version)
-    tools = []
-
-    for tool_def in mcp_spec.get("tools", []):
-        name = tool_def.get("name")
-        if not name:
-            continue
-
-        endpoint_def = tool_def.get("endpoint", {})
-        endpoint_path = endpoint_def.get("path", "")
-        # Replace {version} placeholder with actual version
-        endpoint_path = endpoint_path.replace("{version}", addon_version)
-
-        if not is_within_prefix(endpoint_path, prefix):
-            logger.warning(
-                "Skipping addon tool %s_%s: endpoint %r is outside %r",
-                namespace,
-                name,
-                endpoint_path,
-                prefix,
-            )
-            continue
-
-        read_only = tool_def.get("readOnly")
-        tools.append(
-            AddonTool(
-                name=name,
-                description=tool_def.get("description", ""),
-                parameters=tool_def.get("parameters", {}),
-                endpoint=AddonToolEndpoint(
-                    method=endpoint_def.get("method", "GET"),
-                    path=endpoint_path,
-                ),
-                addon_name=addon_name,
-                addon_version=addon_version,
-                namespace=namespace,
-                read_only=read_only if isinstance(read_only, bool) else None,
-            )
+    tool_defs = mcp_spec.get("tools")
+    if not isinstance(tool_defs, list):
+        logger.warning(
+            "Addon %s/%s: 'tools' is not a list, ignoring",
+            addon_name,
+            addon_version,
         )
+        return []
+    namespace = mcp_spec.get("namespace")
+    if not isinstance(namespace, str) or not namespace:
+        namespace = addon_name
 
+    tools: list[AddonTool] = []
+    for tool_def in tool_defs:
+        tool = _parse_tool(tool_def, namespace, addon_name, addon_version)
+        if tool is not None:
+            tools.append(tool)
     return tools
 
 
@@ -247,7 +326,14 @@ async def _discover_one_addon(
     if mcp_spec is None:
         return []
 
-    tools = parse_addon_tools(mcp_spec, addon_name, version)
+    try:
+        tools = parse_addon_tools(mcp_spec, addon_name, version)
+    except Exception:
+        # One broken addon must not take the others down with it.
+        logger.exception(
+            "Addon %s/%s MCP tools could not be parsed", addon_name, version
+        )
+        return []
     if tools:
         logger.info(
             "Discovered %d MCP tools from addon %s/%s",
@@ -296,10 +382,20 @@ async def discover_addon_tools(
     )
 
     all_tools: list[AddonTool] = []
+    seen_names: set[str] = set()
     discovered_addons: set[str] = set()
     for tools in results:
-        all_tools.extend(tools)
-        discovered_addons.update(t.addon_name for t in tools)
+        for tool in tools:
+            if tool.full_name in seen_names:
+                logger.warning(
+                    "Skipping addon tool %s from %s: name already taken",
+                    tool.full_name,
+                    tool.addon_name,
+                )
+                continue
+            seen_names.add(tool.full_name)
+            all_tools.append(tool)
+            discovered_addons.add(tool.addon_name)
 
     logger.info(
         "Total: discovered %d addon tools from %d addons",

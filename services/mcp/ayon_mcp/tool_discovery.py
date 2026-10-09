@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import inspect
+import logging
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
@@ -15,6 +16,8 @@ if TYPE_CHECKING:
     from .addon_discovery import AddonTool
     from .addon_tools import AddonToolProvider
 
+
+logger = logging.getLogger(__name__)
 
 MUTATING_TOOL_NAMES = frozenset({
     "add_comment",
@@ -89,28 +92,45 @@ def create_curated_tools(
     return tools
 
 
-def create_addon_ayon_tools(addon_tools: list[AddonTool]) -> list[AyonTool]:
+def create_addon_ayon_tools(
+    addon_tools: list[AddonTool],
+    reserved_names: frozenset[str] | set[str] = frozenset(),
+) -> list[AyonTool]:
     """Convert addon tools to AyonTool format for discovery.
 
     Args:
         addon_tools: List of discovered addon tools.
+        reserved_names: Names already taken (curated tools); addon tools
+            colliding with them are skipped so an addon cannot shadow a
+            built-in tool.
 
     Returns:
         List of AyonTool instances for the discovery provider.
 
     """
-    return [
-        AyonTool(
-            name=tool.full_name,
-            namespace=f"ayon.addon.{tool.addon_name}",
-            description=tool.description,
-            parameters=tool.parameters,
-            function=None,
-            requires_confirmation=tool.requires_confirmation,
-            is_addon_tool=True,
+    tools: list[AyonTool] = []
+    taken = set(reserved_names)
+    for tool in addon_tools:
+        if tool.full_name in taken:
+            logger.warning(
+                "Skipping addon tool %s from %s: name already taken",
+                tool.full_name,
+                tool.addon_name,
+            )
+            continue
+        taken.add(tool.full_name)
+        tools.append(
+            AyonTool(
+                name=tool.full_name,
+                namespace=f"ayon.addon.{tool.addon_name}",
+                description=tool.description,
+                parameters=tool.parameters,
+                function=None,
+                requires_confirmation=tool.requires_confirmation,
+                is_addon_tool=True,
+            )
         )
-        for tool in addon_tools
-    ]
+    return tools
 
 
 class AyonDynamicToolProvider(BaseDynamicToolProvider[AyonTool]):
@@ -281,7 +301,11 @@ def create_discovery_tools(
     """
     all_tools = create_curated_tools(functions)
     if addon_tools:
-        all_tools = [*all_tools, *create_addon_ayon_tools(addon_tools)]
+        reserved = {tool.name for tool in all_tools}
+        all_tools = [
+            *all_tools,
+            *create_addon_ayon_tools(addon_tools, reserved),
+        ]
     provider = AyonDynamicToolProvider(all_tools, addon_provider)
 
     async def list_ayon_tools(limit: int = 50) -> dict[str, Any]:

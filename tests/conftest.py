@@ -4,6 +4,7 @@ from __future__ import annotations
 import os
 import socket
 import sys
+from collections.abc import Iterator
 from pathlib import Path
 from unittest.mock import MagicMock
 from urllib.parse import urlparse
@@ -49,9 +50,26 @@ def pytest_configure(config: pytest.Config) -> None:
 
 
 REPO_ROOT = Path(__file__).parent.parent
+OPENAPI_SPEC = REPO_ROOT / "services" / "mcp" / "ayon_openapi.json"
 DEFAULT_OLLAMA_HOST = "http://localhost:11434"
 DEFAULT_OLLAMA_MODEL = "qwen2.5:7b"
 DEFAULT_ANTHROPIC_MODEL = "claude-opus-5"
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _restore_openapi_spec() -> Iterator[None]:
+    """Restore the tracked ``ayon_openapi.json`` after the test session.
+
+    Creating the MCP server syncs the spec from the AYON server configured
+    in ``.env`` and rewrites the file, which would leave the working tree
+    dirty after every run.
+    """
+    original = OPENAPI_SPEC.read_bytes() if OPENAPI_SPEC.exists() else None
+    yield
+    if original is not None and (
+        not OPENAPI_SPEC.exists() or OPENAPI_SPEC.read_bytes() != original
+    ):
+        OPENAPI_SPEC.write_bytes(original)
 
 
 @pytest.fixture(scope="session")

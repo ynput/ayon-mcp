@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import pytest
 
+from ayon_mcp.client import set_global_ayon_as_user
 from ayon_mcp.guardrails import GuardsMode, guards_mode
 from ayon_mcp.tool_discovery import (
     AyonDynamicToolProvider,
@@ -171,6 +172,37 @@ async def test_strict_mode_blocks_repeated_identical_failures(
     assert result["success"] is False
     assert "retries" in result["error"].lower()
     assert len(calls) == 3
+
+
+@pytest.mark.asyncio
+async def test_strict_mode_retry_limit_is_per_caller(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("AYON_MCP_GUARDS", "strict")
+    calls = []
+
+    def get_event(event_id: str) -> dict[str, str]:
+        """Get an event."""
+        calls.append(event_id)
+        msg = "boom"
+        raise RuntimeError(msg)
+
+    provider = AyonDynamicToolProvider(create_curated_tools([get_event]))
+
+    try:
+        set_global_ayon_as_user("alice")
+        for _ in range(3):
+            await provider.call_tool("get_event", {"event_id": "1"})
+        result = await provider.call_tool("get_event", {"event_id": "1"})
+        assert "retries" in result["error"].lower()
+
+        set_global_ayon_as_user("bob")
+        result = await provider.call_tool("get_event", {"event_id": "1"})
+    finally:
+        set_global_ayon_as_user(None)
+
+    assert result == {"success": False, "error": "boom"}
+    assert len(calls) == 4
 
 
 @pytest.mark.asyncio

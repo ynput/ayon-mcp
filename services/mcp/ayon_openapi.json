@@ -6877,10 +6877,6 @@
             "title": "Createdat",
             "type": "string"
           },
-          "createdBy": {
-            "title": "Createdby",
-            "type": "string"
-          },
           "folderType": {
             "title": "Foldertype",
             "type": "string"
@@ -10513,16 +10509,6 @@
             "description": "Optional filter selecting which inbox items should be updated",
             "title": "Item filter"
           },
-          "itemFilter": {
-            "allOf": [
-              {
-                "$ref": "#/components/schemas/ManageInboxItemFilter"
-              }
-            ],
-            "deprecated": false,
-            "description": "Optional filter selecting which inbox items should be updated",
-            "title": "Item filter"
-          },
           "projectName": {
             "title": "Projectname",
             "type": "string"
@@ -11241,9 +11227,6 @@
                 "type": "null"
               }
             ]
-          },
-          "registryAuth": {
-            "$ref": "#/components/schemas/RegistryAuth"
           },
           "shouldRun": {
             "anyOf": [
@@ -14069,10 +14052,6 @@
             ],
             "title": "Belongs to HERO version"
           },
-          "belongsToHero": {
-            "title": "Belongs to HERO version",
-            "type": "boolean"
-          },
           "createdAt": {
             "description": "Time of creation",
             "examples": [
@@ -15249,9 +15228,6 @@
               }
             ]
           },
-          "registryAuth": {
-            "$ref": "#/components/schemas/RegistryAuth"
-          },
           "storagePath": {
             "anyOf": [
               {
@@ -15380,9 +15356,6 @@
                 "type": "null"
               }
             ]
-          },
-          "registryAuth": {
-            "$ref": "#/components/schemas/RegistryAuth"
           },
           "storagePath": {
             "anyOf": [

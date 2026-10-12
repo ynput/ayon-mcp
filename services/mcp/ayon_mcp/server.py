@@ -14,11 +14,21 @@ from fastmcp.server.middleware import CallNext, Middleware, MiddlewareContext
 
 # from fastmcp.server.providers.openapi import MCPType, RouteMap
 from .client import get_ayon_api, set_global_ayon_client
-from .instructions import INSTRUCTIONS, OPENAPI_INSTRUCTIONS
+from .guardrails import read_only_enabled
+from .instructions import (
+    INSTRUCTIONS,
+    OPENAPI_INSTRUCTIONS,
+    READ_ONLY_INSTRUCTIONS,
+)
 from .metrics import TokenMetrics
 from .openapi_codegen import sync_openapi_tools_from_server
 from .rest_client import RestApiClient, set_global_rest_client
-from .tool_discovery import create_discovery_tools
+from .rest_policy import admin_tools_enabled
+from .tool_discovery import (
+    create_discovery_tools,
+    drop_admin_tools,
+    drop_mutating_tools,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -178,6 +188,17 @@ def create_mcp_server(base_url: str, api_key: str) -> FastMCP:
         else INSTRUCTIONS
     )
 
+    tools = list(tools_module.ALL_TOOLS)
+    if not admin_tools_enabled():
+        # Secrets, credentials, user/access management and server lifecycle
+        # endpoints are opt-in - see rest_policy.ADMIN_PATTERNS.
+        tools = drop_admin_tools(tools)
+    if read_only_enabled():
+        # Not registering mutating tools at all covers direct exposure mode
+        # too, where calls never pass through AyonDynamicToolProvider.
+        tools = drop_mutating_tools(tools)
+        instructions = f"{instructions}\n{READ_ONLY_INSTRUCTIONS}"
+
     mcp = FastMCP(
         lifespan=server_lifespan,
         name="AYON MCP Server",
@@ -185,12 +206,9 @@ def create_mcp_server(base_url: str, api_key: str) -> FastMCP:
     )
 
     if tools_module.tool_exposure_mode() == "direct":
-        register_tools(mcp, tools_module.ALL_TOOLS)
+        register_tools(mcp, tools)
     else:
-        register_tools(
-            mcp,
-            create_discovery_tools(list(tools_module.ALL_TOOLS)),
-        )
+        register_tools(mcp, create_discovery_tools(tools))
 
     return mcp
 

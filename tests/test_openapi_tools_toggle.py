@@ -6,6 +6,7 @@ import os
 
 import pytest
 
+
 def _reload_tools_module():
     import ayon_mcp.tools as tools_module
 
@@ -61,7 +62,6 @@ def test_openapi_tools_not_registered_when_disabled(
             "openapi_generated tools are not present; run the generator before "
             "reloading tools"
         )
-
 
     disabled_tools_module = _reload_tools_module()
     disabled_names = {fn.__name__ for fn in disabled_tools_module.ALL_TOOLS}

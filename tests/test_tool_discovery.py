@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import threading
+
 import pytest
 
+from ayon_mcp.client import get_global_ayon_as_user, set_global_ayon_as_user
 from ayon_mcp.tool_discovery import AyonDynamicToolProvider, create_curated_tools
 
 
@@ -67,3 +70,24 @@ async def test_openapi_mutation_requires_explicit_confirmation():
 
     assert blocked["success"] is False
     assert executed == {"success": True, "result": {"id": "123"}}
+
+
+@pytest.mark.asyncio
+async def test_sync_tools_run_off_the_event_loop_as_the_caller():
+    seen = {}
+
+    def get_user_name() -> dict[str, str]:
+        """Get the current user's name."""
+        seen["thread"] = threading.get_ident()
+        return {"name": get_global_ayon_as_user()}
+
+    provider = AyonDynamicToolProvider(create_curated_tools([get_user_name]))
+
+    try:
+        set_global_ayon_as_user("alice")
+        result = await provider.call_tool("get_user_name", {})
+    finally:
+        set_global_ayon_as_user(None)
+
+    assert result == {"success": True, "result": {"name": "alice"}}
+    assert seen["thread"] != threading.get_ident()

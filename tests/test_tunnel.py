@@ -435,7 +435,8 @@ async def test_service_user_middleware_requires_user_header(
         await middleware.on_call_tool(MagicMock(), call_next)
 
 
-def test_service_user_clients_are_bounded(
+@pytest.mark.asyncio
+async def test_service_user_clients_are_bounded(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(
@@ -445,10 +446,10 @@ def test_service_user_clients_are_bounded(
         "http://ayon", SERVICE_KEY, max_clients=2
     )
 
-    alice = middleware._client_for("alice")
-    middleware._client_for("bob")
-    assert middleware._client_for("alice") is alice
-    middleware._client_for("carol")  # evicts bob, used least recently
+    alice = await middleware._client_for("alice")
+    await middleware._client_for("bob")
+    assert await middleware._client_for("alice") is alice
+    await middleware._client_for("carol")  # evicts bob, used least recently
 
     assert list(middleware._clients) == ["alice", "carol"]
 

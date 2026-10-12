@@ -83,9 +83,13 @@ class RemoteApiKeyMiddleware(Middleware):
             )
             raise RuntimeError(msg)
 
+        # Validating the key is a blocking HTTP call - keep it off the loop.
+        client = await asyncio.to_thread(
+            get_ayon_api, self._base_url, request_api_key
+        )
         set_global_ayon_api_key(request_api_key)
         set_global_ayon_as_user(None)
-        set_global_ayon_client(get_ayon_api(self._base_url, request_api_key))
+        set_global_ayon_client(client)
         return await call_next(context)  # ty: ignore[invalid-return-type]
 
 
@@ -117,12 +121,18 @@ class ServiceUserMiddleware(Middleware):
         self._max_clients = max_clients
         self._clients: OrderedDict[str, ayon_api.ServerAPI] = OrderedDict()
 
-    def _client_for(self, user_name: str) -> ayon_api.ServerAPI:
+    def _new_client(self, user_name: str) -> ayon_api.ServerAPI:
+        client = get_ayon_api(self._base_url, self._api_key)
+        # Raises ValueError if the key is not a service user's key.
+        client.set_default_service_username(user_name)
+        return client
+
+    async def _client_for(self, user_name: str) -> ayon_api.ServerAPI:
         client = self._clients.get(user_name)
         if client is None:
-            client = get_ayon_api(self._base_url, self._api_key)
-            # Raises ValueError if the key is not a service user's key.
-            client.set_default_service_username(user_name)
+            # Blocking HTTP calls run in a thread; the cache itself is only
+            # touched on the event loop.
+            client = await asyncio.to_thread(self._new_client, user_name)
             self._clients[user_name] = client
             while len(self._clients) > self._max_clients:
                 self._clients.popitem(last=False)
@@ -164,7 +174,7 @@ class ServiceUserMiddleware(Middleware):
 
         set_global_ayon_api_key(self._api_key)
         set_global_ayon_as_user(user_name)
-        set_global_ayon_client(self._client_for(user_name))
+        set_global_ayon_client(await self._client_for(user_name))
         return await call_next(context)  # ty: ignore[invalid-return-type]
 
 

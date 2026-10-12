@@ -50,7 +50,6 @@ class MCPAddon(BaseServerAddon):
     """Add-on class for the server."""
     settings_model: Type[MCPSettings] = MCPSettings
     addon_type = "server"
-    frontend_scopes: dict[str, Any] = {"settings": {}}  # ruff: ignore[mutable-class-default]
 
     def initialize(self) -> None:
         """Set up the MCP endpoint and the service tunnel.

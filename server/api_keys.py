@@ -2,7 +2,7 @@
 
 AYON lets every user create API keys for themselves through the API
 (``POST /api/users/{name}/apikeys``), but the web app shows no screen for
-it. This action creates one for the user who clicks it and copies a ready
+it. This action creates one for the user who clicks it and shows a ready
 MCP client configuration with the key in it: the Claude Code command, an
 entry for ``.mcp.json`` or VS Code's ``mcp.json``, or a Claude Desktop
 entry.
@@ -12,7 +12,7 @@ a label, a preview and an expiry, in the user's ``apiKeys`` list.
 
 The first click answers with a form (format, machine). Submitting it runs
 the action again with ``context.form_data``, and only then is a key
-created.
+created. The answer is a second dialog with the configuration to copy.
 """
 from __future__ import annotations
 
@@ -37,6 +37,7 @@ if TYPE_CHECKING:
 
 ACTION_ID = "mcp.create-api-key"
 LABEL_PREFIX = "mcp"
+RESULT_FIELD = "config"
 SECONDS_PER_DAY = 86400
 
 FORMATS = {
@@ -101,7 +102,7 @@ def snippet(fmt: str, name: str, url: str, key: str) -> tuple[str, str]:
         key: The new API key.
 
     Returns:
-        The clipboard text, and what to do with it.
+        The text to copy, and what to do with it.
 
     """
     if fmt in {"mcp_json", "vscode"}:
@@ -185,7 +186,6 @@ async def get_actions(
         SimpleActionManifest(
             identifier=ACTION_ID,
             label="Create my MCP key",
-            group_label="MCP",
             category="MCP",
             description=(
                 "Create an API key for yourself and copy what connects "
@@ -208,6 +208,8 @@ def _refusal(settings: ApiKeyActionSettings, executor: ActionExecutor) -> str:
         The refusal message, or "" when the user may create a key.
 
     """
+    if not settings.enabled:
+        return "Creating MCP keys is turned off on this server."
     user = executor.user
     if user.is_service or user.is_guest:
         return "Service and guest users cannot create an MCP key."
@@ -239,7 +241,7 @@ def _form(user_name: str, days: int) -> SimpleForm:
     form = SimpleForm()
     form.label(
         f"A new API key for {user_name} on this server, valid until "
-        f"{_until(expires)}. It is shown once, on your clipboard."
+        f"{_until(expires)}. It is shown once, in the next dialog."
     )
     form.select(
         "format",
@@ -249,10 +251,69 @@ def _form(user_name: str, days: int) -> SimpleForm:
     )
     form.text(
         "machine",
-        label="Which machine is it for? (optional)",
+        label="Machine (optional)",
         placeholder="laptop",
         regex=MACHINE_RE.pattern,
     )
+    return form
+
+
+async def _create_key(
+    user_name: str, machine: str, days: int
+) -> tuple[str, dict[str, Any]]:
+    """Create an API key and append it to the user's keys.
+
+    Args:
+        user_name: The user the key is for.
+        machine: Machine name for the label, may be empty.
+        days: Key lifetime in days, 0 for never.
+
+    Returns:
+        The key, and the record stored for it.
+
+    """
+    key = secrets.token_hex(16)
+    now = time.time()
+    stamp = datetime.now(UTC).strftime("%Y%m%d-%H%M%S")
+    # The last four characters match the preview AYON shows, and keep two
+    # clicks in one second from sharing a label (AYON's own endpoint
+    # refuses duplicate labels).
+    parts = [LABEL_PREFIX, machine, stamp, key[-4:]]
+    record = {
+        "id": create_uuid(),
+        "label": "-".join(p for p in parts if p),
+        "key": hash_password(key),
+        "preview": key[:4] + "*****" + key[-4:],
+        "created": now,
+        "expires": now + days * SECONDS_PER_DAY if days else None,
+    }
+    await Postgres.execute(APPEND_KEY_SQL, [record], user_name)
+    return key, record
+
+
+def _result(
+    record: dict[str, Any], user_name: str, text: str, how: str
+) -> SimpleForm:
+    """Return the dialog that shows the new key.
+
+    Args:
+        record: The stored key record.
+        user_name: The user the key is for.
+        text: The configuration to copy, with the key in it.
+        how: What to do with it.
+
+    Returns:
+        The form.
+
+    """
+    form = SimpleForm()
+    form.label(
+        f"Key **{record['label']}** created for {user_name}, valid until "
+        f"{_until(record['expires'])}. It is shown only now: copy it "
+        "before you close this dialog."
+    )
+    form.label(how)
+    form.text(RESULT_FIELD, value=text, multiline=True)
     return form
 
 
@@ -266,17 +327,13 @@ async def execute(
         executor: The action executor.
 
     Returns:
-        The form, a refusal, or the key copied in the chosen format.
+        The form, a refusal, or the key in the chosen format.
 
     """
     settings = await _settings(addon, executor.variant)
     user = executor.user
 
     # Checked on both steps: the form is not a gate on its own.
-    if not settings.enabled:
-        return await executor.get_simple_response(
-            "Creating MCP keys is turned off on this server.", success=False
-        )
     if refusal := _refusal(settings, executor):
         return await executor.get_simple_response(refusal, success=False)
 
@@ -287,6 +344,10 @@ async def execute(
             fields=_form(user.name, settings.key_valid_days),
             submit_label="Create key",
             submit_icon="key",
+        )
+    if RESULT_FIELD in form_data:
+        return await executor.get_simple_response(
+            "Nothing more to do: no new key was created."
         )
 
     fmt = str(form_data.get("format") or "command")
@@ -302,32 +363,18 @@ async def execute(
             success=False,
         )
 
-    key = secrets.token_hex(16)
-    now = time.time()
-    days = settings.key_valid_days
-    expires = now + days * SECONDS_PER_DAY if days else None
-    stamp = datetime.now(UTC).strftime("%Y%m%d-%H%M%S")
-    # The last four characters match the preview AYON shows, and keep two
-    # clicks in one second from sharing a label (AYON's own endpoint
-    # refuses duplicate labels).
-    parts = [LABEL_PREFIX, machine, stamp, key[-4:]]
-    record = {
-        "id": create_uuid(),
-        "label": "-".join(p for p in parts if p),
-        "key": hash_password(key),
-        "preview": key[:4] + "*****" + key[-4:],
-        "created": now,
-        "expires": expires,
-    }
-    await Postgres.execute(APPEND_KEY_SQL, [record], user.name)
-
+    key, record = await _create_key(
+        user.name, machine, settings.key_valid_days
+    )
     url = _endpoint(settings, executor.server_url)
     text, how = snippet(fmt, settings.server_name, url, key)
-    return await executor.get_simple_response(
-        (
-            f"Key {record['label']} created for {user.name} and copied "
-            f"as {FORMATS[fmt].split(': ', 1)[1]}. {how} "
-            f"It is shown only now. Expires: {_until(expires)}."
-        ),
+    # Shown in a dialog: the web app drops a clipboard write the browser
+    # refuses (Safari, plain-HTTP servers) without a word. It ignores
+    # extra_clipboard on a form answer today; kept for when it does not.
+    return await executor.get_form_response(
+        title="Your MCP key",
+        fields=_result(record, user.name, text, how),
+        submit_label=None,
+        cancel_label="Close",
         extra_clipboard=text,
     )

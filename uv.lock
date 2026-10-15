@@ -97,6 +97,7 @@ dependencies = [
     { name = "mcp" },
     { name = "opentelemetry-distro" },
     { name = "tiktoken" },
+    { name = "websockets" },
 ]
 
 [package.dev-dependencies]
@@ -124,6 +125,7 @@ requires-dist = [
     { name = "mcp", specifier = ">=1.28.1" },
     { name = "opentelemetry-distro", specifier = ">=0.65b0" },
     { name = "tiktoken", specifier = ">=0.14.0" },
+    { name = "websockets", specifier = ">=15.0.1" },
 ]
 
 [package.metadata.requires-dev]

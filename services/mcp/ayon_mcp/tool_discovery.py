@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import inspect
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
@@ -152,6 +153,29 @@ def create_curated_tools(
     return tools
 
 
+async def _invoke(
+    function: Callable[..., Any], arguments: dict[str, Any]
+) -> Any:  # ruff: ignore[any-type]
+    """Call a tool function without blocking the event loop.
+
+    Curated tools block on ayon_api HTTP calls, so sync functions run in a
+    worker thread. ``asyncio.to_thread`` copies contextvars, so the call
+    still uses the caller's AYON client, and one slow call doesn't stall
+    other users' requests or the tunnel's WebSocket keepalive.
+
+    Returns:
+        The function's result.
+
+    """
+    if inspect.iscoroutinefunction(function):
+        result = await function(**arguments)
+    else:
+        result = await asyncio.to_thread(function, **arguments)
+    if inspect.isawaitable(result):
+        result = await result
+    return result
+
+
 class AyonDynamicToolProvider(BaseDynamicToolProvider[AyonTool]):
     """Expose AYON tools through chuk's compact discovery protocol."""
 
@@ -288,9 +312,7 @@ class AyonDynamicToolProvider(BaseDynamicToolProvider[AyonTool]):
 
         """
         try:
-            result = tool.function(**arguments)
-            if inspect.isawaitable(result):
-                result = await result
+            result = await _invoke(tool.function, arguments)
         except Exception as exc:  # ruff: ignore[blind-except]
             if self._retry_guard is not None:
                 self._retry_guard.record_attempt(

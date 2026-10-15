@@ -9,10 +9,11 @@ deliberately not) covered here.
 
 from __future__ import annotations
 
+import hashlib
 import logging
 import os
 from enum import StrEnum
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from chuk_tool_processor.guards import (
     EnforcementLevel,
@@ -29,6 +30,8 @@ from chuk_tool_processor.guards import (
     SideEffectConfig,
     SideEffectGuard,
 )
+
+from .client import get_global_ayon_api_key, get_global_ayon_as_user
 
 if TYPE_CHECKING:
     from .tool_discovery import AyonTool
@@ -106,6 +109,46 @@ def read_only_enabled() -> bool:
     """
     value = (os.getenv("AYON_MCP_READ_ONLY", "false") or "").strip().lower()
     return value in TRUTHY_VALUES
+
+
+def caller_identity() -> str:
+    """Identify the AYON user the current tool call acts as.
+
+    Uses the ``x-as-user`` name in tunnel mode, otherwise a hash of the
+    request's API key (remote mode keys belong to different users). Empty
+    when no request context is set.
+
+    Returns:
+        A stable identity string for the current caller.
+
+    """
+    as_user = get_global_ayon_as_user()
+    if as_user:
+        return f"user:{as_user}"
+    try:
+        api_key = get_global_ayon_api_key()
+    except RuntimeError:
+        return ""
+    digest = hashlib.sha256(api_key.encode()).hexdigest()[:16]
+    return f"key:{digest}"
+
+
+class CallerScopedRetrySafetyGuard(RetrySafetyGuard):
+    """``RetrySafetyGuard`` that tracks retries per caller.
+
+    One provider serves every user in remote and tunnel mode, so the stock
+    ``(tool, arguments)`` signature would let one user's failing calls
+    block another user's identical call.
+    """
+
+    def _compute_signature(
+        self,
+        tool_name: str,
+        arguments: dict[str, Any],
+    ) -> str:
+        signature = super()._compute_signature(tool_name, arguments)
+        content = f"{caller_identity()}:{signature}"
+        return hashlib.sha256(content.encode()).hexdigest()[:16]
 
 
 def classify_side_effects(
@@ -190,6 +233,8 @@ def build_guard_chain(tools: list[AyonTool]) -> GuardChain | None:
         # failures. Attempts are recorded by AyonDynamicToolProvider.
         chain.add(
             "retry_safety",
-            RetrySafetyGuard(RetrySafetyConfig(max_same_signature_retries=3)),
+            CallerScopedRetrySafetyGuard(
+                RetrySafetyConfig(max_same_signature_retries=3)
+            ),
         )
     return chain

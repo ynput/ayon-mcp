@@ -21,6 +21,7 @@ dependencies = [
     "structlog>=26.1.0",
     "opentelemetry-distro>=0.65b0",
     "opentelemetry-exporter-otlp-proto-grpc>=1.44.0",
+    "websockets>=15.0.1",
 ]
 
 [project.urls]

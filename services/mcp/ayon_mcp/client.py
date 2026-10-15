@@ -7,6 +7,7 @@ import ayon_api
 _CLIENT_CV: ContextVar[ayon_api.ServerAPI | None] = ContextVar(
     "api_client", default=None)
 _API_KEY_CV: ContextVar[str | None] = ContextVar("api_key", default=None)
+_AS_USER_CV: ContextVar[str | None] = ContextVar("as_user", default=None)
 
 
 def get_ayon_api(server_url: str, api_key: str) -> ayon_api.ServerAPI:
@@ -60,6 +61,27 @@ def set_global_ayon_api_key(api_key: str) -> None:
 
     """
     _API_KEY_CV.set(api_key)
+
+
+def set_global_ayon_as_user(user_name: str | None) -> None:
+    """Set the AYON user a service API key acts as in this context.
+
+    Args:
+        user_name: User to act as (sent as ``x-as-user``), or ``None``
+            to act as the API key's own user.
+
+    """
+    _AS_USER_CV.set(user_name)
+
+
+def get_global_ayon_as_user() -> str | None:
+    """Get the AYON user the service API key acts as in this context.
+
+    Returns:
+        The user name, or ``None`` if requests act as the key's own user.
+
+    """
+    return _AS_USER_CV.get()
 
 
 def get_global_ayon_api_key() -> str:

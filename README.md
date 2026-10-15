@@ -51,6 +51,35 @@ Once done, service will start and you can add MCP server as remote server. See e
 > Right now, the ash responsible for running services is not exposing the ports.
 > You need this PR
 
+### Getting your API key: the "Create my MCP key" action
+
+Every MCP client needs an AYON API key, and the AYON web app has no screen
+for creating one. The addon adds a project action for it: open a project's
+overview page and run **MCP > Create my MCP key**.
+
+1. A form asks how to copy the result: the Claude Code `claude mcp add`
+   command, an entry for a project's `.mcp.json`, an entry for VS Code's
+   `.vscode/mcp.json`, or a Claude Desktop entry. It also asks which
+   machine the key is for (optional, it goes into the key's label).
+2. **Create key** creates an API key for you, and copies the chosen
+   configuration, with the key in it, to your clipboard. The key is shown
+   only this once.
+
+The key belongs to your own AYON user, so the MCP acts with your
+permissions. It is stored like any other AYON API key, labelled
+`mcp-<machine>-<date>-<last four characters>`.
+
+Addon settings (Studio settings > MCP > API key action):
+
+| Setting | Default | Meaning |
+| --- | --- | --- |
+| Enabled | on | Show the action at all |
+| Projects | empty | Projects whose overview shows the action. Empty: every project |
+| Allowed email domains | empty | Only users with an email in these domains get a key. Empty: every user. Guests and service users never do |
+| MCP endpoint URL | empty | What the copied configuration points at. Empty: this AYON server's `/api/mcp`. Set it when the MCP server runs on its own host |
+| Server name in the client | `ayon` | The name the configuration registers |
+| Key lifetime in days | 365 | 0: the key never expires |
+
 ## VSCode (and derivates)
 You can manually configure MCP servers by editing the `mcp.json` file. There are two locations for this file:
 

@@ -38,6 +38,7 @@ if TYPE_CHECKING:
 ACTION_ID = "mcp.create-api-key"
 LABEL_PREFIX = "mcp"
 RESULT_FIELD = "config"
+SERVER_NAME = "ayon"
 SECONDS_PER_DAY = 86400
 
 FORMATS = {
@@ -76,28 +77,11 @@ def _until(expires: float | None) -> str:
     return datetime.fromtimestamp(expires, UTC).strftime("%Y-%m-%d")
 
 
-def _endpoint(settings: ApiKeyActionSettings, server_url: str) -> str:
-    """Return the MCP endpoint URL that clients should use.
-
-    Args:
-        settings: The action settings.
-        server_url: The AYON server URL the click came from.
-
-    Returns:
-        The configured URL, or this server's ``/api/mcp``.
-
-    """
-    if settings.mcp_url.strip():
-        return settings.mcp_url.strip()
-    return f"{server_url.rstrip('/')}/api/mcp"
-
-
-def snippet(fmt: str, name: str, url: str, key: str) -> tuple[str, str]:
+def snippet(fmt: str, url: str, key: str) -> tuple[str, str]:
     """Return the client configuration for one format.
 
     Args:
         fmt: One of ``FORMATS``.
-        name: Server name the configuration registers.
         url: MCP endpoint URL.
         key: The new API key.
 
@@ -107,7 +91,7 @@ def snippet(fmt: str, name: str, url: str, key: str) -> tuple[str, str]:
     """
     if fmt in {"mcp_json", "vscode"}:
         entry = {"type": "http", "url": url, "headers": {"x-api-key": key}}
-        text = f'"{name}": ' + json.dumps(entry, indent=2)
+        text = f'"{SERVER_NAME}": ' + json.dumps(entry, indent=2)
         parent = "mcpServers" if fmt == "mcp_json" else "servers"
         where = (
             "your project's .mcp.json, then start a new Claude Code session"
@@ -129,7 +113,7 @@ def snippet(fmt: str, name: str, url: str, key: str) -> tuple[str, str]:
             ],
             "env": {"AYON_KEY": key},
         }
-        text = f'"{name}": ' + json.dumps(entry, indent=2)
+        text = f'"{SERVER_NAME}": ' + json.dumps(entry, indent=2)
         how = (
             'Paste it inside "mcpServers" in claude_desktop_config.json '
             "(Settings, Developer, Edit Config), then quit and reopen "
@@ -137,7 +121,7 @@ def snippet(fmt: str, name: str, url: str, key: str) -> tuple[str, str]:
         )
         return text, how
     text = (
-        f"claude mcp add --scope user --transport http {name} {url} "
+        f"claude mcp add --scope user --transport http {SERVER_NAME} {url} "
         f'--header "x-api-key: {key}"'
     )
     how = "Paste it in a terminal, then start a new Claude Code session."
@@ -366,8 +350,8 @@ async def execute(
     key, record = await _create_key(
         user.name, machine, settings.key_valid_days
     )
-    url = _endpoint(settings, executor.server_url)
-    text, how = snippet(fmt, settings.server_name, url, key)
+    url = f"{executor.server_url.rstrip('/')}/api/mcp"
+    text, how = snippet(fmt, url, key)
     # Shown in a dialog: the web app drops a clipboard write the browser
     # refuses (Safari, plain-HTTP servers) without a word. It ignores
     # extra_clipboard on a form answer today; kept for when it does not.

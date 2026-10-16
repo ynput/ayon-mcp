@@ -99,7 +99,9 @@ key** (under MCP).
 
 The key belongs to your own AYON user, so the MCP acts with your
 permissions. It is stored like any other AYON API key, labelled
-`mcp-<machine>-<date>-<last four characters>`.
+`mcp-<machine>-<date>-<last four characters>`. The configuration points
+at this AYON server's `/api/mcp` and names the server `ayon`; rename it in
+your client if you need another name.
 
 Addon settings (Studio settings > MCP > API key action):
 
@@ -108,8 +110,6 @@ Addon settings (Studio settings > MCP > API key action):
 | Enabled | on | Show the action at all |
 | Projects | empty | Projects whose overview shows the action. Empty: every project |
 | Allowed email domains | empty | Only users with an email in these domains get a key. Empty: every user. Guests and service users never do |
-| MCP endpoint URL | empty | What the copied configuration points at. Empty: this AYON server's `/api/mcp`. Set it when the MCP server runs on its own host |
-| Server name in the client | `ayon` | The name the configuration registers |
 | Key lifetime in days | 365 | 0: the key never expires |
 
 ## VSCode (and derivates)

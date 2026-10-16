@@ -29,19 +29,6 @@ class ApiKeyActionSettings(BaseSettingsModel):
             "Empty: every user. Guests and service users never do."
         ),
     )
-    mcp_url: str = SettingsField(
-        default="",
-        title="MCP endpoint URL",
-        description=(
-            "Where MCP clients connect. Empty: this AYON server's "
-            "/api/mcp. Set it when the MCP server runs on its own host."
-        ),
-    )
-    server_name: str = SettingsField(
-        default="ayon",
-        title="Server name in the client",
-        description="The name the copied client configuration registers.",
-    )
     key_valid_days: int = SettingsField(
         default=365,
         title="Key lifetime in days",

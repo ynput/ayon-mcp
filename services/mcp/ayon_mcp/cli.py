@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+from urllib.parse import urlsplit
 
 import click
 
@@ -15,6 +16,39 @@ KEY_ENV_VAR = "AYON_API_KEY"
 
 DEFAULT_HOST = "http://localhost"
 DEFAULT_PORT = 5000
+
+
+def build_server_url(host: str, port: int) -> str:
+    """Join a ``--host`` value and ``--port`` into the AYON server URL.
+
+    ``host`` may be a bare host, ``host:port`` or a full URL; a port inside
+    ``host`` wins over ``port``.
+
+    Args:
+        host: Host name or URL, with or without scheme and port.
+        port: Port used when ``host`` carries none.
+
+    Returns:
+        The server URL as ``[scheme://]host:port[path]``.
+
+    Raises:
+        click.UsageError: If the port in ``host`` is not valid.
+
+    """
+    parts = urlsplit(host if "//" in host else f"//{host}")
+    try:
+        url_port = parts.port
+    except ValueError as e:
+        msg = (
+            f"Invalid port number in host URL: {host!r}. "
+            "Port must be an integer.")
+        raise click.UsageError(msg) from e
+
+    scheme = f"{parts.scheme}://" if parts.scheme else ""
+    hostname = parts.netloc.rpartition("@")[2]
+    if url_port is not None:
+        hostname = hostname.rpartition(":")[0]
+    return f"{scheme}{hostname}:{port if url_port is None else url_port}{parts.path.rstrip('/')}"
 
 
 @click.command()
@@ -66,17 +100,7 @@ def main(
         click.UsageError: If required arguments are missing or invalid.
 
     """
-    if ":" in host:
-        host, port_str = host.rsplit(":", 1)
-        try:
-            port = int(port_str)
-        except ValueError as e:
-            msg = (
-                f"Invalid port number in host URL: {port_str!r}. "
-                "Port must be an integer.")
-            raise click.UsageError(msg) from e
-
-    server_url = f"{host}:{port}"
+    server_url = build_server_url(host, port)
     if not api_key:
         api_key = os.getenv(KEY_ENV_VAR)
         if not api_key:

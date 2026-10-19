@@ -126,6 +126,11 @@ class TestGlobalClient:
 # ---------------------------------------------------------------------------
 
 class TestCreateMcpServer:
+    @pytest.fixture(autouse=True)
+    def _no_addon_discovery(self, monkeypatch):
+        # Discovery would query the real server at localhost:5000.
+        monkeypatch.setenv("AYON_MCP_ENABLE_ADDON_TOOLS", "false")
+
     def test_returns_fastmcp_instance(self):
         from ayon_mcp.server import create_mcp_server
         from fastmcp import FastMCP

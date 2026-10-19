@@ -359,7 +359,17 @@ The addon endpoint returns:
   skipped.
 - Addons are queried concurrently at startup, each with its own timeout,
   so one slow addon only loses its own tools.
-- Calls carry the caller's AYON API key, so the addon applies its own ACL.
+- Calls run with the caller's identity, and the addon applies its own ACL
+  to it: the caller's `x-api-key` in remote mode, the service key with
+  `x-as-user` in tunnel mode, and the configured `AYON_API_KEY` in local
+  mode (a service or admin key there means addon tools run with admin
+  rights).
+- The HTTP method is a minimum: `PUT`, `PATCH` and `DELETE` tools can never
+  be declared read-only (the manifest value is ignored with a warning), so
+  they always need `confirm_mutation` and are hidden in read-only mode.
+  Only `POST` may be declared read-only.
+- An addon whose `/mcp/tools` request fails (5xx, timeout, network) is
+  retried on every refresh; an addon answering 404 is not.
 
 Known limitations:
 
@@ -370,7 +380,9 @@ Known limitations:
 - Discovery runs with the configured `AYON_API_KEY`, never as the calling
   user. That key needs read access to `/api/addons` and to each addon's
   `/mcp/tools` endpoint, otherwise the affected addon is skipped (logged
-  as a warning).
+  as a warning). A dev bundle variant also calls `GET /api/bundles`, so the
+  key needs that access too; without it only a "Bundle not found" warning
+  appears and no addon tools are discovered.
 
 Bundle changes: every replica checks which addon versions the variant
 uses at most every `AYON_MCP_ADDON_REFRESH_SECONDS` (default 60, `0`

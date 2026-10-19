@@ -188,7 +188,13 @@ async def fetch_addon_mcp_tools(
     """Fetch MCP tool definitions from an addon.
 
     Returns:
-        MCP tools spec if addon exposes it, None otherwise.
+        MCP tools spec if addon exposes it, None if it does not (404 or an
+        unexpected body).
+
+    Raises:
+        httpx.HTTPError: The request failed (5xx, 403, network error);
+            the addon may expose tools, so the caller should retry later.
+        ValueError: The response was not valid JSON.
 
     """
     path = f"/api/addons/{addon_name}/{addon_version}/mcp/tools"
@@ -214,6 +220,7 @@ async def fetch_addon_mcp_tools(
                 addon_version,
                 status,
             )
+            raise
     except (httpx.HTTPError, ValueError) as exc:
         logger.warning(
             "Addon %s/%s MCP tools request failed: %s",
@@ -221,6 +228,7 @@ async def fetch_addon_mcp_tools(
             addon_version,
             exc,
         )
+        raise
     return None
 
 
@@ -442,7 +450,14 @@ async def _discover_one_addon(
     version: str,
     api_key: str,
     timeout: float,  # ruff: ignore[async-function-with-timeout]
-) -> list[AddonTool]:
+) -> list[AddonTool] | None:
+    """Fetch and parse the MCP tools of one addon version.
+
+    Returns:
+        The addon's tools (empty when it exposes none), or ``None`` when
+        the request failed and should be retried later.
+
+    """
     try:
         mcp_spec = await asyncio.wait_for(
             fetch_addon_mcp_tools(client, addon_name, version, api_key),
@@ -455,14 +470,18 @@ async def _discover_one_addon(
             version,
             timeout,
         )
-        return []
+        return None
+    except (httpx.HTTPError, ValueError):
+        # Already logged by fetch_addon_mcp_tools.
+        return None
     if mcp_spec is None:
         return []
 
     try:
         tools = parse_addon_tools(mcp_spec, addon_name, version)
     except Exception:
-        # One broken addon must not take the others down with it.
+        # One broken addon must not take the others down with it. A broken
+        # manifest is not transient, so it is not retried.
         logger.exception(
             "Addon %s/%s MCP tools could not be parsed", addon_name, version
         )
@@ -526,17 +545,46 @@ async def discover_addon_tools(
             client, api_key, timeout, variant
         )
 
+    results = await _discover_targets(
+        client, api_key, timeout, targets
+    )
+    return _merge_addon_tools(
+        [results.get(target) or [] for target in targets]
+    )
+
+
+async def _discover_targets(
+    client: RestApiClient,
+    api_key: str,
+    timeout: float,  # ruff: ignore[async-function-with-timeout]
+    targets: list[tuple[str, str]],
+) -> dict[tuple[str, str], list[AddonTool] | None]:
+    """Query ``targets`` concurrently.
+
+    Returns:
+        Tools per target; ``None`` marks a failed request.
+
+    """
     results = await asyncio.gather(
         *(
             _discover_one_addon(client, name, version, api_key, timeout)
             for name, version in targets
         )
     )
+    return dict(zip(targets, results, strict=True))
 
+
+def _merge_addon_tools(per_addon: list[list[AddonTool]]) -> list[AddonTool]:
+    """Flatten per-addon tools, keeping the first of duplicate names.
+
+    Returns:
+        All tools in addon order.
+
+    """
     all_tools: list[AddonTool] = []
     seen_names: set[str] = set()
     discovered_addons: set[str] = set()
-    for tools in results:
+    for tools in per_addon:
         for tool in tools:
             if tool.full_name in seen_names:
                 logger.warning(
@@ -602,6 +650,9 @@ class AddonCatalog:
         self._refresh_interval = refresh_interval
         self._timeout = timeout
         self._targets: list[tuple[str, str]] | None = None
+        self._tools_by_target: dict[tuple[str, str], list[AddonTool]] = {}
+        # Targets whose last request failed; retried on every refresh.
+        self._failed_targets: set[tuple[str, str]] = set()
         self._checked_at = float("-inf")
         self._forced_at = float("-inf")
         self._lock: asyncio.Lock | None = None
@@ -653,26 +704,46 @@ class AddonCatalog:
             targets = await resolve_addon_targets(
                 client, self._api_key, self._timeout, self._variant
             )
-            if targets == self._targets:
+            if targets == self._targets and not self._failed_targets:
                 return
-            tools = await discover_addon_tools(
-                client,
-                self._api_key,
-                self._timeout,
-                self._variant,
-                targets=targets,
+            # Re-ask only new versions and addons that failed before.
+            to_fetch = [
+                target
+                for target in targets
+                if target not in self._tools_by_target
+                or target in self._failed_targets
+            ]
+            fetched = await _discover_targets(
+                client, self._api_key, self._timeout, to_fetch
             )
         finally:
             await client.close()
-        if self._targets is not None:
+        recovered = any(
+            target in self._failed_targets and fetched[target] is not None
+            for target in fetched
+        )
+        changed = targets != self._targets
+        by_target = {
+            target: self._tools_by_target.get(target, [])
+            for target in targets
+        }
+        for target, tools in fetched.items():
+            by_target[target] = tools or []
+        self._failed_targets = {
+            target for target, tools in fetched.items() if tools is None
+        }
+        tools = _merge_addon_tools([by_target[t] for t in targets])
+        if self._targets is not None and changed:
             logger.info(
                 "Addon versions of %r changed, %d addon MCP tools now",
                 self._variant,
                 len(tools),
             )
         self._targets = targets
-        self.tools = tools
-        self.generation += 1
+        self._tools_by_target = by_target
+        if changed or recovered:
+            self.tools = tools
+            self.generation += 1
 
     async def _load_logged(self) -> None:
         """Run ``_load``, keeping the current tools when it fails."""

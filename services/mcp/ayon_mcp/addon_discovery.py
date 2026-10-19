@@ -63,6 +63,11 @@ class AddonTool:
         return f"{self.namespace}_{self.name}"
 
 
+# Methods whose default is never relaxed by a manifest. Only POST may be
+# declared read-only (query endpoints that carry a body).
+_NEVER_READ_ONLY_METHODS = frozenset({"PUT", "PATCH", "DELETE"})
+
+
 def declared_side_effect(
     tool_def: dict[str, Any],
     method: str,
@@ -75,13 +80,40 @@ def declared_side_effect(
     addon declares the effect per tool. ``sideEffect`` (``read_only`` /
     ``write`` / ``destructive``) wins, then ``readOnly``; without either
     the method default from ``rest_policy`` applies, which fails closed
-    for anything but GET.
+    for anything but GET. The method is a minimum: ``PUT``, ``PATCH`` and
+    ``DELETE`` can never be declared read-only, so they stay behind
+    ``confirm_mutation`` and out of read-only mode.
 
     Returns:
         The tool's ``SideEffectClass``.
 
     """
     default = METHOD_SIDE_EFFECTS[method]
+    effect = _declared_effect(tool_def, default, full_name)
+    if effect is SideEffectClass.READ_ONLY and (
+        method in _NEVER_READ_ONLY_METHODS
+    ):
+        logger.warning(
+            "Addon tool %s: %s cannot be read only, using %s",
+            full_name,
+            method,
+            default.value,
+        )
+        return default
+    return effect
+
+
+def _declared_effect(
+    tool_def: dict[str, Any],
+    default: SideEffectClass,
+    full_name: str,
+) -> SideEffectClass:
+    """Apply the manifest's ``sideEffect`` / ``readOnly`` over ``default``.
+
+    Returns:
+        The declared ``SideEffectClass``, or ``default`` when none applies.
+
+    """
     declared = tool_def.get("sideEffect")
     if declared is not None:
         effect = (

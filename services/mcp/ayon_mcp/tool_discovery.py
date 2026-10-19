@@ -2,22 +2,42 @@
 
 from __future__ import annotations
 
+import asyncio
 import inspect
 import logging
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from chuk_tool_processor.discovery import BaseDynamicToolProvider
+from chuk_tool_processor.guards import (
+    ErrorClass,
+    RetrySafetyGuard,
+    SideEffectClass,
+)
 from fastmcp.tools.function_tool import FunctionTool
 
-if TYPE_CHECKING:
-    from collections.abc import Callable
+from .addon_tools import call_addon_tool
+from .guardrails import (
+    DESTRUCTIVE_TOOL_NAMES,
+    build_guard_chain,
+    read_only_enabled,
+)
+from .rest_policy import endpoint_of, is_admin, side_effect_for
 
-    from .addon_discovery import AddonTool
-    from .addon_tools import AddonToolProvider
+if TYPE_CHECKING:
+    from collections.abc import Callable, Iterable
+
+    from chuk_tool_processor.guards import GuardChain
+
+    from .addon_discovery import AddonCatalog, AddonTool
+    from .rest_client import RestApiClient
 
 
 logger = logging.getLogger(__name__)
+
+
+# Sentinel: "build the guard chain from env" vs. an explicit None
+_DEFAULT = object()
 
 MUTATING_TOOL_NAMES = frozenset({
     "add_comment",
@@ -27,7 +47,6 @@ MUTATING_TOOL_NAMES = frozenset({
     "set_addon_settings",
     "update_entity",
 })
-MUTATING_HTTP_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
 
 
 @dataclass(frozen=True)
@@ -38,9 +57,13 @@ class AyonTool:
     namespace: str
     description: str
     parameters: dict[str, Any]
-    function: Callable[..., Any] | None
-    requires_confirmation: bool = False
-    is_addon_tool: bool = False
+    function: Callable[..., Any]
+    side_effect: SideEffectClass = SideEffectClass.READ_ONLY
+
+    @property
+    def requires_confirmation(self) -> bool:
+        """Whether the tool changes AYON data and needs confirm_mutation."""
+        return self.side_effect is not SideEffectClass.READ_ONLY
 
 
 def _tool_description(function: Callable[..., Any]) -> str:
@@ -56,14 +79,60 @@ def _tool_description(function: Callable[..., Any]) -> str:
     )
 
 
+def tool_side_effect(function: Callable[..., Any]) -> SideEffectClass:
+    """Classify a tool function as read-only, write, or destructive.
+
+    Curated tools are classified by name; generated REST tools by their
+    endpoint, via ``rest_policy``. Anything else is a curated read tool.
+
+    Returns:
+        The tool's ``SideEffectClass``.
+
+    """
+    name = function.__name__
+    if name in DESTRUCTIVE_TOOL_NAMES:
+        return SideEffectClass.DESTRUCTIVE
+    if name in MUTATING_TOOL_NAMES:
+        return SideEffectClass.WRITE
+    endpoint = endpoint_of(function)
+    if endpoint is not None:
+        return side_effect_for(*endpoint)
+    return SideEffectClass.READ_ONLY
+
+
 def _requires_confirmation(function: Callable[..., Any]) -> bool:
-    if function.__name__ in MUTATING_TOOL_NAMES:
-        return True
-    docstring = inspect.getdoc(function) or ""
-    return any(
-        f"Endpoint: {method} " in docstring
-        for method in MUTATING_HTTP_METHODS
-    )
+    return tool_side_effect(function) is not SideEffectClass.READ_ONLY
+
+
+def drop_mutating_tools(
+    functions: list[Callable[..., Any]],
+) -> list[Callable[..., Any]]:
+    """Remove every state-changing tool, for ``AYON_MCP_READ_ONLY`` mode.
+
+    Returns:
+        Only the functions not classified as mutating.
+
+    """
+    return [
+        function for function in functions
+        if not _requires_confirmation(function)
+    ]
+
+
+def drop_admin_tools(
+    functions: list[Callable[..., Any]],
+) -> list[Callable[..., Any]]:
+    """Remove admin/security REST tools, unless ``AYON_MCP_ADMIN_TOOLS``.
+
+    Returns:
+        Only the functions not calling an admin endpoint.
+
+    """
+    return [
+        function for function in functions
+        if (endpoint := endpoint_of(function)) is None
+        or not is_admin(*endpoint)
+    ]
 
 
 def create_curated_tools(
@@ -86,28 +155,47 @@ def create_curated_tools(
                 description=_tool_description(function),
                 parameters=fastmcp_tool.parameters,
                 function=function,
-                requires_confirmation=_requires_confirmation(function),
+                side_effect=tool_side_effect(function),
             )
         )
     return tools
 
 
+def _addon_function(
+    tool: AddonTool,
+    client: RestApiClient | None,
+) -> Callable[..., Any]:
+    async def run(**arguments: Any) -> Any:  # ruff: ignore[any-type]
+        return await call_addon_tool(tool, arguments, client)
+
+    run.__name__ = tool.full_name
+    return run
+
+
 def create_addon_ayon_tools(
     addon_tools: list[AddonTool],
-    reserved_names: frozenset[str] | set[str] = frozenset(),
+    reserved_names: Iterable[str] = (),
+    client: RestApiClient | None = None,
 ) -> list[AyonTool]:
     """Convert addon tools to AyonTool format for discovery.
+
+    Addon tools carry the side effect their addon declared, so the same
+    confirmation policy and guard chain apply as for curated tools. In
+    ``AYON_MCP_READ_ONLY`` mode only read-only addon tools are kept.
 
     Args:
         addon_tools: List of discovered addon tools.
         reserved_names: Names already taken (curated tools); addon tools
             colliding with them are skipped so an addon cannot shadow a
             built-in tool.
+        client: REST client for the addon calls. When omitted, the
+            process-global client is resolved per call.
 
     Returns:
         List of AyonTool instances for the discovery provider.
 
     """
+    read_only = read_only_enabled()
     tools: list[AyonTool] = []
     taken = set(reserved_names)
     for tool in addon_tools:
@@ -118,6 +206,8 @@ def create_addon_ayon_tools(
                 tool.addon_name,
             )
             continue
+        if read_only and tool.side_effect is not SideEffectClass.READ_ONLY:
+            continue
         taken.add(tool.full_name)
         tools.append(
             AyonTool(
@@ -125,12 +215,34 @@ def create_addon_ayon_tools(
                 namespace=f"ayon.addon.{tool.addon_name}",
                 description=tool.description,
                 parameters=tool.parameters,
-                function=None,
-                requires_confirmation=tool.requires_confirmation,
-                is_addon_tool=True,
+                function=_addon_function(tool, client),
+                side_effect=tool.side_effect,
             )
         )
     return tools
+
+
+async def _invoke(
+    function: Callable[..., Any], arguments: dict[str, Any]
+) -> Any:  # ruff: ignore[any-type]
+    """Call a tool function without blocking the event loop.
+
+    Curated tools block on ayon_api HTTP calls, so sync functions run in a
+    worker thread. ``asyncio.to_thread`` copies contextvars, so the call
+    still uses the caller's AYON client, and one slow call doesn't stall
+    other users' requests or the tunnel's WebSocket keepalive.
+
+    Returns:
+        The function's result.
+
+    """
+    if inspect.iscoroutinefunction(function):
+        result = await function(**arguments)
+    else:
+        result = await asyncio.to_thread(function, **arguments)
+    if inspect.isawaitable(result):
+        result = await result
+    return result
 
 
 class AyonDynamicToolProvider(BaseDynamicToolProvider[AyonTool]):
@@ -139,27 +251,85 @@ class AyonDynamicToolProvider(BaseDynamicToolProvider[AyonTool]):
     def __init__(
         self,
         tools: list[AyonTool],
-        addon_provider: AddonToolProvider | None = None,
+        guard_chain: GuardChain | object | None = _DEFAULT,
+        addon_catalog: AddonCatalog | None = None,
     ) -> None:
         """Initialize the provider with its available AYON tools.
 
         Args:
-            tools: List of all tools (curated + addon).
-            addon_provider: Provider for executing addon tools.
+            tools: The catalogued AYON tools this provider exposes.
+            guard_chain: Guard chain to run before/after execution.
+                Defaults to the env-configured chain from
+                ``guardrails.build_guard_chain`` (itself ``None`` when
+                ``AYON_MCP_GUARDS=off``). Pass ``None`` explicitly to skip
+                guardrails regardless of env. ``AYON_MCP_READ_ONLY`` is
+                enforced either way.
+            addon_catalog: Source of addon tools. Its tools are appended
+                to ``tools`` and re-read whenever the catalog reports a
+                bundle change, so the catalog follows addon updates.
 
         """
         super().__init__()
+        self._base_tools = tools
+        self._addon_catalog = addon_catalog
+        self._addon_generation = -1
+        self._read_only = read_only_enabled()
+        self._explicit_guard_chain = guard_chain
+        self._set_tools(self._combined_tools())
+
+    def _combined_tools(self) -> list[AyonTool]:
+        if self._addon_catalog is None:
+            return self._base_tools
+        self._addon_generation = self._addon_catalog.generation
+        return [
+            *self._base_tools,
+            *create_addon_ayon_tools(
+                self._addon_catalog.tools,
+                reserved_names={tool.name for tool in self._base_tools},
+            ),
+        ]
+
+    def _set_tools(self, tools: list[AyonTool]) -> None:
+        """Replace the catalog and rebuild everything derived from it."""
         self._tools = tools
         self._tools_by_name = {tool.name: tool for tool in tools}
-        self._addon_provider = addon_provider
+        self._guard_chain = (
+            build_guard_chain(tools)
+            if self._explicit_guard_chain is _DEFAULT
+            else self._explicit_guard_chain
+        )
+        retry_guard = (
+            self._guard_chain.get("retry_safety")
+            if self._guard_chain is not None
+            else None
+        )
+        self._retry_guard = (
+            retry_guard if isinstance(retry_guard, RetrySafetyGuard) else None
+        )
+        self.invalidate_cache()
+
+    async def _sync_addon_tools(self, *, force: bool = False) -> None:
+        """Pick up addon tools changed by a bundle update.
+
+        Every service replica discovers on its own, so a replica may not
+        know a tool another replica already listed. ``force`` re-checks
+        the server right away (rate limited by the catalog) when a tool
+        name is unknown here.
+        """
+        if self._addon_catalog is None:
+            return
+        await self._addon_catalog.refresh(force=force)
+        if self._addon_catalog.generation != self._addon_generation:
+            self._set_tools(self._combined_tools())
 
     async def get_all_tools(self) -> list[AyonTool]:
         """Return every catalogued AYON tool.
 
         Returns:
-            The stable discovery catalog.
+            The discovery catalog, refreshed after addon changes.
 
         """
+        await self._sync_addon_tools()
         return self._tools
 
     async def get_tool_schema(self, tool_name: str) -> dict[str, Any]:
@@ -176,6 +346,8 @@ class AyonDynamicToolProvider(BaseDynamicToolProvider[AyonTool]):
             An OpenAI-style function schema with confirmation metadata.
 
         """
+        if tool_name not in self._tools_by_name:
+            await self._sync_addon_tools(force=True)
         schema = await super().get_tool_schema(tool_name)
         tool = self._tools_by_name.get(
             schema.get("function", {}).get("name", tool_name)
@@ -215,6 +387,54 @@ class AyonDynamicToolProvider(BaseDynamicToolProvider[AyonTool]):
         )
         return schema
 
+    def _policy_error(
+        self, tool: AyonTool, *, confirmed: object
+    ) -> str | None:
+        """Return why a mutating call is refused, independent of guards.
+
+        Returns:
+            The refusal message, or ``None`` when the call may proceed.
+
+        """
+        if not tool.requires_confirmation:
+            return None
+        if self._read_only:
+            return (
+                f"Tool '{tool.name}' changes AYON data and is blocked: "
+                "the server runs in read-only mode (AYON_MCP_READ_ONLY)."
+            )
+        if confirmed is not True:
+            return (
+                f"Tool '{tool.name}' changes AYON data. Set "
+                "confirm_mutation=true only after explicit user approval."
+            )
+        return None
+
+    async def _run_tool(
+        self,
+        tool: AyonTool,
+        arguments: dict[str, Any],
+    ) -> tuple[bool, Any]:
+        """Call the tool function, recording the attempt for retry safety.
+
+        Returns:
+            ``(True, result)`` on success, ``(False, error message)`` if the
+            tool raised.
+
+        """
+        try:
+            result = await _invoke(tool.function, arguments)
+        except Exception as exc:  # ruff: ignore[blind-except]
+            if self._retry_guard is not None:
+                self._retry_guard.record_attempt(
+                    tool.name, arguments, ErrorClass.UNKNOWN
+                )
+            return False, str(exc)
+
+        if self._retry_guard is not None:
+            self._retry_guard.record_success(tool.name, arguments)
+        return True, result
+
     async def execute_tool(
         self,
         tool_name: str,
@@ -228,6 +448,9 @@ class AyonDynamicToolProvider(BaseDynamicToolProvider[AyonTool]):
         """
         tool = self._tools_by_name.get(tool_name)
         if tool is None:
+            await self._sync_addon_tools(force=True)
+            tool = self._tools_by_name.get(tool_name)
+        if tool is None:
             return {
                 "success": False,
                 "error": f"Tool '{tool_name}' was not found.",
@@ -235,78 +458,50 @@ class AyonDynamicToolProvider(BaseDynamicToolProvider[AyonTool]):
 
         arguments = dict(arguments)
         confirmed = arguments.pop("confirm_mutation", False)
-        if tool.requires_confirmation and confirmed is not True:
-            return {
-                "success": False,
-                "error": (
-                    f"Tool '{tool.name}' changes AYON data. Set "
-                    "confirm_mutation=true only after explicit user approval."
-                ),
-            }
+        policy_error = self._policy_error(tool, confirmed=confirmed)
+        if policy_error is not None:
+            return {"success": False, "error": policy_error}
 
-        if tool.is_addon_tool:
-            if self._addon_provider is None:
-                return {
-                    "success": False,
-                    "error": "Addon tool provider not configured.",
-                }
-            return await self._addon_provider.execute_tool(
+        if self._guard_chain is not None:
+            guard_result = await self._guard_chain.check_all_async(
                 tool_name, arguments
             )
+            if guard_result.blocked:
+                return {"success": False, "error": guard_result.final_reason}
+            if guard_result.repaired_args is not None:
+                arguments = guard_result.repaired_args
 
-        return await self._run_curated_tool(tool, arguments)
+        succeeded, result = await self._run_tool(tool, arguments)
+        if not succeeded:
+            return {"success": False, "error": result}
 
-    @staticmethod
-    async def _run_curated_tool(
-        tool: AyonTool,
-        arguments: dict[str, Any],
-    ) -> dict[str, Any]:
-        """Call a curated tool function and wrap its outcome.
-
-        Returns:
-            A structured success result or the raised error message.
-
-        """
-        if tool.function is None:
-            return {
-                "success": False,
-                "error": f"Tool '{tool.name}' has no executable function.",
-            }
-
-        try:
-            result = tool.function(**arguments)
-            if inspect.isawaitable(result):
-                result = await result
-        except Exception as exc:  # ruff: ignore[blind-except]
-            return {"success": False, "error": str(exc)}
+        if self._guard_chain is not None:
+            output_check = self._guard_chain.check_output_all(
+                tool_name, arguments, result
+            )
+            if output_check.blocked:
+                return {"success": False, "error": output_check.final_reason}
 
         return {"success": True, "result": result}
 
 
 def create_discovery_tools(
     functions: list[Callable[..., Any]],
-    addon_tools: list[AddonTool] | None = None,
-    addon_provider: AddonToolProvider | None = None,
+    addon_catalog: AddonCatalog | None = None,
 ) -> list[Callable[..., Any]]:
     """Create the fixed MCP surface for discovering AYON tools on demand.
 
     Args:
         functions: Curated FastMCP-compatible tool functions.
-        addon_tools: Tools discovered from AYON addons.
-        addon_provider: Provider that executes addon tools via REST.
+        addon_catalog: Tools discovered from AYON addons, if enabled.
 
     Returns:
         The five callable MCP discovery tools.
 
     """
-    all_tools = create_curated_tools(functions)
-    if addon_tools:
-        reserved = {tool.name for tool in all_tools}
-        all_tools = [
-            *all_tools,
-            *create_addon_ayon_tools(addon_tools, reserved),
-        ]
-    provider = AyonDynamicToolProvider(all_tools, addon_provider)
+    provider = AyonDynamicToolProvider(
+        create_curated_tools(functions), addon_catalog=addon_catalog
+    )
 
     async def list_ayon_tools(limit: int = 50) -> dict[str, Any]:
         """List AYON tools with concise descriptions.

@@ -11,7 +11,8 @@ tasks, publishes, the event stream, and addon settings.
 > go through AYON's operations endpoint with real permissions — mistakes can
 > mutate or delete production data. Use a restricted API key, review
 > mutations before confirming, and prefer a non-production server until
-> you've validated the behavior for your workflow.
+> you've validated the behavior for your workflow. A [guard chain](#guardrails)
+> adds defense in depth, but is not a substitute for these precautions.
 
 ## Requirements
 
@@ -19,36 +20,67 @@ tasks, publishes, the event stream, and addon settings.
 - A reachable AYON server and an API key
   (user profile → API keys, or a service user key)
 
-## Configuration
-
-Environment variables (or the matching CLI flags):
-
-| Variable | Meaning |
-| --- | --- |
-| `AYON_SERVER_URL` | e.g. `https://ayon.mystudio.com` or `http://localhost:5000` |
-| `AYON_API_KEY` | API key of the user the assistant acts as |
-| `AYON_MCP_OTEL_ENABLED` | Set to `true` to enable OpenTelemetry (default: `false`) |
-
-The assistant inherits the permissions of that user — use a restricted
-user if you only want read access.
-
-For the Docker service, set `AYON_MCP_OTEL_ENABLED=true` to export traces,
-metrics, and logs to the configured OTLP endpoints. OpenTelemetry is disabled
-by default.
-
 ## Usage
 
 ## Remote MCP server as AYON service
 You can quickly setup MCP server for remote connections by using it as AYON service:
 
 1) Install ayon-mcp as an AYON addon (build it if necessary: `python -X dev ./create_package.py`)
-2) Set up the service - in AYON, go to Services (`V+V`) > New Service, select your host, pick the *AYON MCP Server* addon, and select the version. Take care to select a free port (the default, *8088*, might already be in use). If you change the port, also set the environment variable `AYON_MCP_PORT` so the service configures it properly.
+2) Set up the service - in AYON, go to Services (`V+V`) > New Service, select your host, pick the *AYON MCP Server* addon, and select the version.
 
 Once done, service will start and you can add MCP server as remote server. See examples below.
 
 > [!NOTE]
-> Right now, the ash responsible for running services is not exposing the ports.
-> You need this PR
+> When running MCP as an AYON service, you can use `https://<server_name>/api/mcp` as your stable URL in
+> client configuration. When running as standalone server (using containers or directly), you need accessible
+> host ip address and port exposed. For manual setup using tunnel mode, see Technical details below.
+
+<details>
+<summary>
+Technical details - tunnel mode
+</summary>
+### Through the AYON server (tunnel mode)
+
+The MCP addon serves the MCP endpoint on the AYON server, and the service answers it
+through a WebSocket tunnel. A service run by ASH (the AYON Services page) uses tunnel mode
+by default; elsewhere set `AYON_MCP_TRANSPORT=tunnel` or run `ayon-mcp --tunnel`. To keep
+an ASH service listening on a port instead, set `AYON_MCP_TRANSPORT=http` on it. The
+service then opens no port: it
+connects out to the addon's WebSocket (`/api/addons/mcp/<version>/ws`), and MCP clients
+use the AYON server itself:
+
+```
+https://<ayon-server>/api/mcp
+```
+
+`/api/mcp` redirects (307) to the MCP addon of the production bundle,
+`/api/addons/mcp/<version>/mcp`, so client configuration survives addon updates. It needs
+an AYON server with that redirect; on older servers use the versioned URL directly.
+
+The addon forwards plain HTTP through the tunnel and streams responses back
+chunk by chunk, so SSE responses (progress notifications) are not buffered.
+
+- Clients authenticate against AYON as usual (`x-api-key` or `Authorization` header).
+  Unauthenticated requests never reach the service, and neither do the caller's credentials:
+  the addon passes only the authenticated user name. The service calls AYON with its own
+  `AYON_API_KEY` and `x-as-user: <user>`, so the caller's permissions apply.
+- `AYON_API_KEY` must belong to a service user. Only service users can open the tunnel.
+- Tunnel URL: `AYON_MCP_TUNNEL_URL` if set; otherwise the addon given by
+  `AYON_ADDON_NAME`/`AYON_ADDON_VERSION` (ASH sets these for services it runs); otherwise
+  the MCP addon of the production bundle, looked up when the service starts.
+- Each addon version has its own endpoint and tunnels, so production and staging services
+  don't mix.
+- The MCP app runs stateless, so several service replicas can connect at once.
+  The addon prefers a tunnel held by the worker serving the request and otherwise routes
+  through Redis to the worker holding one, so any number of server workers and replicas work.
+- Responses are flow controlled per request: a client that reads slowly holds back only its
+  own response, and server memory per request stays bounded (about 1 MiB).
+- If the service can't open the tunnel it logs why once and keeps retrying every ~30 s:
+  wrong or non-service `AYON_API_KEY`, a tunnel protocol version mismatch between service
+  and addon (run the service of the addon's version), or no MCP addon of that version on
+  the server (or use `AYON_MCP_TRANSPORT=http`).
+</details>
+
 
 ## VSCode (and derivates)
 You can manually configure MCP servers by editing the `mcp.json` file. There are two locations for this file:
@@ -82,12 +114,13 @@ On Linux and macOS, use `bash` with `scripts/start_local.sh` instead.
 
 ### Remote (http)
 
-For remote server (replace host - it can be localhost in case you are running it locally in a container):
+For remote server (replace `server_name` - it can be localhost in case you are running it locally in a container).
+See above for differences between running it as AYON service, standalone server or local mode.
 ```json
 {
 	"servers": {
 		"ayon-mcp-remote": {
-			"url": "http://host:8088/mcp",
+			"url": "https://<server_name>/api/mcp",
 			"headers": {
 				"x-api-key": "<your-api-key-or-env-var>"
 			},
@@ -114,9 +147,11 @@ claude mcp add ayon-mcp \
 
 ### Remote (http)
 
+See above for differences between running it as AYON service, standalone server or local mode. 
+
 ```sh
 claude mcp add --transport http ayon-mcp-remote \
-  http://host:8088/mcp \
+  https://<server_name>/api/mcp \
   --header "x-api-key: your-api-key"
 ```
 
@@ -152,6 +187,34 @@ The MCP endpoint is then served at `http://<host>:8088/mcp`.
 The port can be changed using environment variable `AYON_MCP_PORT`
 
 
+## Advanced Configuration
+
+Environment variables (or the matching CLI flags):
+
+| Variable | Meaning |
+| --- | --- |
+| `AYON_SERVER_URL` | e.g. `https://ayon.mystudio.com` or `http://localhost:5000` |
+| `AYON_API_KEY` | API key of the user the assistant acts as |
+| `AYON_MCP_TOOL_EXPOSURE` | Set direct-tool surface (tools are directly exposed) |
+| `AYON_MCP_ENABLE_OPENAPI_TOOLS` | set to `false` to disable all OpenAPI generated tools |
+| `AYON_MCP_PORT` | control port the MCP service will listen on |
+| `AYON_MCP_TRANSPORT` | `http` or `tunnel` for remote mode (default: `tunnel` under ASH, otherwise `http`) |
+
+Telemetry:
+| Variable | Meaning |
+| --- | --- |
+| `AYON_MCP_OTEL_ENABLED` | Set to `true` to enable OpenTelemetry (default: `false`) |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | OTLP endpoint for metrics/logs |
+| `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` | OTLP endpoint for traces  |
+
+The assistant inherits the permissions of that user — use a restricted
+user if you only want read access.
+
+For the Docker service, set `AYON_MCP_OTEL_ENABLED=true` to export traces,
+metrics, and logs to the configured OTLP endpoints. OpenTelemetry is disabled
+by default.
+
+
 ## Tools
 
 By default, the server exposes five discovery tools instead of every AYON
@@ -174,6 +237,31 @@ for compatibility.
 
 Write tools modify production data through the standard AYON operations
 endpoint, so server-side validation, permissions and events all apply.
+
+### Guardrails
+
+Every call routed through the discovery surface also passes through a
+[chuk-tool-processor](https://pypi.org/project/chuk-tool-processor/) guard
+chain (schema validation, side-effect gating, sensitive-data
+and output-size checks) before it reaches AYON. See
+[`docs/design/guardrails.md`](docs/design/guardrails.md) for the design.
+
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `AYON_MCP_GUARDS` | `default` | `default` - the standard chain. `strict` - also blocks destructive tools (e.g. `delete_entity`) regardless of `confirm_mutation`, and blocks an identical tool call after it failed 3 times. `off` (or `false`/`0`/`no`) - disables the guard chain entirely. |
+| `AYON_MCP_READ_ONLY` | `false` | When truthy, write/destructive tools are not registered at all (in both discovery and direct exposure mode) and are refused if called. Enforced even with `AYON_MCP_GUARDS=off`. |
+| `AYON_MCP_ADMIN_TOOLS` | `false` | When truthy, registers generated REST tools for admin/security endpoints (secrets, API keys, auth/sessions, user and access management, `/api/system/*`, services, addon/installer uploads). Hidden by default, reads included. |
+
+Generated REST tools are classified by HTTP method (`GET` read-only,
+`POST`/`PUT`/`PATCH` write, `DELETE` destructive), with a reviewed override
+table for endpoints where the method doesn't match the effect (e.g.
+`POST /api/query` is read-only, `POST /api/system/restart` is destructive).
+Both the overrides and the admin endpoint patterns live in
+[`services/mcp/ayon_mcp/rest_policy.py`](services/mcp/ayon_mcp/rest_policy.py).
+When the AYON server adds endpoints,
+`services/mcp/scripts/suggest_rest_policy.py` can ask a local Ollama model
+for classification suggestions to review - its output is never used at
+runtime.
 
 ### Generated OpenAPI Tools
 
@@ -216,8 +304,8 @@ Addons can ship their own MCP tools without any change in this repository.
 On startup, AYON MCP:
 
 1. Fetches `GET /api/addons` to list installed addons
-2. For each addon, requests `GET /api/addons/{name}/{version}/mcp/tools`
-   (production version, falling back to the first listed version)
+2. For each addon active in the configured variant, requests
+   `GET /api/addons/{name}/{version}/mcp/tools`
 3. Skips addons that answer 404 or an invalid payload
 4. Registers every returned tool as `{namespace}_{name}` in the discovery
    catalog (`search_ayon_tools`, `get_ayon_tool_schema`, `call_ayon_tool`)
@@ -249,10 +337,18 @@ The addon endpoint returns:
 - `{param}` placeholders matching an argument name become path parameters.
 - Remaining arguments are sent as query parameters for `GET` and as a JSON
   body for other methods.
-- `readOnly: true` on a tool marks it safe to run without confirmation
-  (use it for `POST` query endpoints). Without the flag, `POST`, `PUT`,
-  `PATCH` and `DELETE` tools require `confirm_mutation=true`, like the
-  curated write tools.
+- The manifest is the addon's own side-effect policy: `sideEffect`
+  (`read_only`, `write` or `destructive`) classifies a tool, `readOnly:
+  true` is a shorthand for `read_only` (use it for `POST` query
+  endpoints). Without either, the HTTP method decides as for generated
+  REST tools: `GET` is read-only, `POST`/`PUT`/`PATCH` write and `DELETE`
+  destructive. Write and destructive tools require
+  `confirm_mutation=true`, go through the same guard chain as curated
+  tools (`AYON_MCP_GUARDS`) and are not exposed in `AYON_MCP_READ_ONLY`
+  mode.
+- Manifests are capped: at most 50 tools per addon, descriptions are cut
+  at 2000 characters and a tool whose `parameters` schema exceeds 20 kB is
+  skipped. Responses are capped by the guard chain's output size limit.
 - `endpoint.path` must start with `/api/addons/{name}/{version}/` and
   contain no `..` segments; tools pointing elsewhere are skipped with a
   warning. The resolved path is checked again before every call.
@@ -271,17 +367,30 @@ Known limitations:
   discovery is skipped entirely.
 - `confirm_mutation` is reserved by `call_ayon_tool`; an addon tool that
   declares a parameter with that name is skipped with a warning.
-- Discovery runs once at startup with the configured `AYON_API_KEY`. That
-  key needs read access to `/api/addons` and to each addon's `/mcp/tools`
-  endpoint, otherwise the affected addon is skipped (logged as a warning).
-- The addon version is resolved at startup. After a bundle change, restart
-  AYON MCP so tool endpoints point at the new version.
+- Discovery runs with the configured `AYON_API_KEY`, never as the calling
+  user. That key needs read access to `/api/addons` and to each addon's
+  `/mcp/tools` endpoint, otherwise the affected addon is skipped (logged
+  as a warning).
+
+Bundle changes: every replica checks which addon versions the variant
+uses at most every `AYON_MCP_ADDON_REFRESH_SECONDS` (default 60, `0`
+turns the periodic check off), on the next discovery call, and re-reads
+the manifests only when a version changed. A tool name the replica does
+not know triggers an immediate check (at most every 10 seconds), so a
+tool listed by an already updated replica resolves on the others too.
 
 To disable discovery, set:
 
 - `AYON_MCP_ENABLE_ADDON_TOOLS=false`
 
 ## Development and tests
+
+MCP clients use ``/api/addons/mcp/{version}/mcp`` (or the server's
+``/api/mcp``, which redirects to the production version).
+        """
+Each addon version has its own hub and Redis keys, so production
+and staging services each serve their own version's endpoint.
+
 
 ### Running tests
 Test dependencies (pytest, pytest-ayon, dotenv, ...) live in the `test`

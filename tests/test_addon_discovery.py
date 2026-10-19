@@ -2,18 +2,26 @@
 
 from __future__ import annotations
 
+import asyncio
 from typing import Any
 
 import httpx
 import pytest
+from chuk_tool_processor.guards import SideEffectClass
 
+from ayon_mcp import addon_discovery
 from ayon_mcp.addon_discovery import (
+    MAX_DESCRIPTION_CHARS,
+    MAX_PARAMETERS_BYTES,
+    MAX_TOOLS_PER_ADDON,
+    AddonCatalog,
     AddonTool,
     AddonToolEndpoint,
     discover_addon_tools,
     parse_addon_tools,
 )
-from ayon_mcp.addon_tools import AddonToolProvider
+from ayon_mcp.addon_tools import AddonToolError, call_addon_tool
+from ayon_mcp.client import get_global_ayon_as_user, set_global_ayon_as_user
 from ayon_mcp.tool_discovery import (
     AyonDynamicToolProvider,
     create_addon_ayon_tools,
@@ -73,12 +81,22 @@ REPORTS_SPEC: dict[str, Any] = {
 }
 
 
+@pytest.fixture(autouse=True)
+def _default_policy_env(monkeypatch):
+    # .env is loaded with override; keep the policy env deterministic.
+    monkeypatch.delenv("AYON_MCP_READ_ONLY", raising=False)
+    monkeypatch.delenv("AYON_MCP_GUARDS", raising=False)
+
+
 class FakeRestClient:
     """Minimal RestApiClient stand-in recording requests."""
 
     def __init__(self, routes: dict[tuple[str, str], Any]) -> None:
         self.routes = routes
         self.calls: list[dict[str, Any]] = []
+
+    async def close(self) -> None:
+        pass
 
     async def request(
         self,
@@ -97,6 +115,7 @@ class FakeRestClient:
                 "params": params,
                 "json": json,
                 "headers": headers,
+                "as_user": get_global_ayon_as_user(),
             }
         )
         key = (method.upper(), path)
@@ -123,11 +142,85 @@ def test_parse_addon_tools_prefixes_namespace_and_resolves_version():
         "reports_add_chart",
     ]
     assert tools[0].endpoint.path == "/api/addons/reports/1.2.0/metrics"
-    assert tools[0].requires_confirmation is False
+    assert tools[0].side_effect is SideEffectClass.READ_ONLY
     # POST declared readOnly: no confirmation needed
-    assert tools[1].requires_confirmation is False
+    assert tools[1].side_effect is SideEffectClass.READ_ONLY
     # POST without readOnly falls back to the HTTP method
-    assert tools[2].requires_confirmation is True
+    assert tools[2].side_effect is SideEffectClass.WRITE
+
+
+@pytest.mark.parametrize(
+    ("method", "declared", "expected"),
+    [
+        ("GET", {}, SideEffectClass.READ_ONLY),
+        ("PATCH", {}, SideEffectClass.WRITE),
+        ("DELETE", {}, SideEffectClass.DESTRUCTIVE),
+        ("DELETE", {"readOnly": False}, SideEffectClass.DESTRUCTIVE),
+        ("GET", {"readOnly": False}, SideEffectClass.WRITE),
+        ("POST", {"readOnly": True}, SideEffectClass.READ_ONLY),
+        ("POST", {"sideEffect": "destructive"}, SideEffectClass.DESTRUCTIVE),
+        # sideEffect wins over readOnly
+        (
+            "POST",
+            {"sideEffect": "WRITE", "readOnly": True},
+            SideEffectClass.WRITE,
+        ),
+        # unknown values fall back to the method default
+        ("POST", {"sideEffect": "harmless"}, SideEffectClass.WRITE),
+        ("GET", {"sideEffect": 1}, SideEffectClass.READ_ONLY),
+    ],
+)
+def test_parse_addon_tools_side_effect_policy(method, declared, expected):
+    spec = {
+        "tools": [
+            {
+                "name": "op",
+                **declared,
+                "endpoint": {
+                    "method": method,
+                    "path": "/api/addons/planner/{version}/op",
+                },
+            }
+        ]
+    }
+
+    tools = parse_addon_tools(spec, "planner", "2.0.0")
+
+    assert tools[0].side_effect is expected
+
+
+def test_parse_addon_tools_caps_manifest_size():
+    spec = {
+        "tools": [
+            {
+                "name": "long_description",
+                "description": "x" * (MAX_DESCRIPTION_CHARS + 10),
+                "endpoint": {"path": "/api/addons/planner/{version}/a"},
+            },
+            {
+                "name": "huge_schema",
+                "parameters": {
+                    "type": "object",
+                    "description": "y" * MAX_PARAMETERS_BYTES,
+                },
+                "endpoint": {"path": "/api/addons/planner/{version}/b"},
+            },
+            *(
+                {
+                    "name": f"tool_{index}",
+                    "endpoint": {"path": "/api/addons/planner/{version}/c"},
+                }
+                for index in range(MAX_TOOLS_PER_ADDON)
+            ),
+        ]
+    }
+
+    tools = parse_addon_tools(spec, "planner", "2.0.0")
+
+    names = [tool.name for tool in tools]
+    assert len(tools) == MAX_TOOLS_PER_ADDON - 1
+    assert "huge_schema" not in names
+    assert len(tools[0].description) == MAX_DESCRIPTION_CHARS
 
 
 def test_parse_addon_tools_falls_back_to_addon_name_namespace():
@@ -169,17 +262,15 @@ def test_parse_addon_tools_rejects_endpoints_outside_addon_prefix():
 async def test_path_argument_cannot_escape_addon_prefix():
     addon_tools = parse_addon_tools(REPORTS_SPEC, "reports", "1.2.0")
     client = FakeRestClient({})
-    provider = AddonToolProvider(addon_tools, client)
-
-    result = await provider.execute_tool(
-        "reports_add_chart",
-        {"dashboard_id": "../../../users", "preview_token": "tok"},
-    )
 
     # The value is percent-encoded into a single segment, but a server or
     # proxy decodes it before routing, so it must be rejected outright.
-    assert result["success"] is False
-    assert "outside the addon prefix" in result["error"]
+    with pytest.raises(AddonToolError, match="outside the addon prefix"):
+        await call_addon_tool(
+            addon_tools[2],
+            {"dashboard_id": "../../../users", "preview_token": "tok"},
+            client,
+        )
     assert client.calls == []
 
 
@@ -243,7 +334,7 @@ def test_parse_addon_tools_skips_malformed_definitions():
     assert tools[0].endpoint.method == "POST"
     assert tools[0].description == ""
     assert tools[0].parameters == {}
-    assert tools[0].requires_confirmation is True
+    assert tools[0].side_effect is SideEffectClass.WRITE
 
 
 def test_parse_addon_tools_rejects_reserved_parameter_names():
@@ -510,9 +601,8 @@ async def test_addon_tools_are_searchable_alongside_curated_tools():
     provider = AyonDynamicToolProvider(
         [
             *create_curated_tools([get_project]),
-            *create_addon_ayon_tools(addon_tools),
-        ],
-        AddonToolProvider(addon_tools, FakeRestClient({})),
+            *create_addon_ayon_tools(addon_tools, client=FakeRestClient({})),
+        ]
     )
 
     search = await provider.search_tools("metrics")
@@ -529,8 +619,7 @@ async def test_get_tool_proxies_arguments_as_query_params():
         {("GET", "/api/addons/reports/1.2.0/metrics"): {"metrics": []}}
     )
     provider = AyonDynamicToolProvider(
-        create_addon_ayon_tools(addon_tools),
-        AddonToolProvider(addon_tools, client),
+        create_addon_ayon_tools(addon_tools, client=client)
     )
 
     result = await provider.call_tool(
@@ -548,8 +637,7 @@ async def test_post_tool_requires_confirmation_and_fills_path_params():
     path = "/api/addons/reports/1.2.0/dashboards/dash%201/charts"
     client = FakeRestClient({("POST", path): {"id": "chart-1"}})
     provider = AyonDynamicToolProvider(
-        create_addon_ayon_tools(addon_tools),
-        AddonToolProvider(addon_tools, client),
+        create_addon_ayon_tools(addon_tools, client=client)
     )
     arguments = {"dashboard_id": "dash 1", "preview_token": "tok"}
 
@@ -571,8 +659,7 @@ async def test_read_only_post_tool_runs_without_confirmation():
     path = "/api/addons/reports/1.2.0/metrics/query"
     client = FakeRestClient({("POST", path): {"data": [1]}})
     provider = AyonDynamicToolProvider(
-        create_addon_ayon_tools(addon_tools),
-        AddonToolProvider(addon_tools, client),
+        create_addon_ayon_tools(addon_tools, client=client)
     )
 
     result = await provider.call_tool(
@@ -587,14 +674,9 @@ async def test_read_only_post_tool_runs_without_confirmation():
 async def test_missing_path_argument_fails_before_request():
     addon_tools = parse_addon_tools(REPORTS_SPEC, "reports", "1.2.0")
     client = FakeRestClient({})
-    provider = AddonToolProvider(addon_tools, client)
 
-    result = await provider.execute_tool(
-        "reports_add_chart", {"preview_token": "tok"}
-    )
-
-    assert result["success"] is False
-    assert "dashboard_id" in result["error"]
+    with pytest.raises(AddonToolError, match="dashboard_id"):
+        await call_addon_tool(addon_tools[2], {"preview_token": "tok"}, client)
     assert client.calls == []
 
 
@@ -612,12 +694,9 @@ async def test_addon_http_errors_become_structured_results():
         namespace="x",
     )
     client = FakeRestClient({})
-    provider = AddonToolProvider([tool], client)
 
-    result = await provider.execute_tool("x_fail", {})
-
-    assert result["success"] is False
-    assert "404" in result["error"]
+    with pytest.raises(AddonToolError, match="404"):
+        await call_addon_tool(tool, {}, client)
     assert client.calls[0]["path"] == "/api/addons/x/1/missing"
 
 
@@ -637,14 +716,10 @@ async def test_addon_malformed_json_becomes_structured_result():
         addon_version="1",
         namespace="x",
     )
-    provider = AddonToolProvider(
-        [tool], MalformedJsonClient({("GET", "/api/addons/x/1/b"): {}})
-    )
+    client = MalformedJsonClient({("GET", "/api/addons/x/1/b"): {}})
 
-    result = await provider.execute_tool("x_broken", {})
-
-    assert result["success"] is False
-    assert "Expecting value" in result["error"]
+    with pytest.raises(AddonToolError, match="Expecting value"):
+        await call_addon_tool(tool, {}, client)
 
 
 @pytest.mark.asyncio
@@ -659,10 +734,156 @@ async def test_path_outside_addon_prefix_fails_before_request():
         namespace="x",
     )
     client = FakeRestClient({})
-    provider = AddonToolProvider([tool], client)
 
-    result = await provider.execute_tool("x_escape", {})
+    with pytest.raises(AddonToolError, match="outside the addon prefix"):
+        await call_addon_tool(tool, {}, client)
+    assert client.calls == []
+
+
+@pytest.mark.asyncio
+async def test_addon_errors_become_structured_provider_results():
+    addon_tools = parse_addon_tools(REPORTS_SPEC, "reports", "1.2.0")
+    provider = AyonDynamicToolProvider(
+        create_addon_ayon_tools(addon_tools, client=FakeRestClient({}))
+    )
+
+    result = await provider.call_tool(
+        "reports_list_metrics", {"project_name": "demo"}
+    )
 
     assert result["success"] is False
-    assert "outside the addon prefix" in result["error"]
-    assert client.calls == []
+    assert "404" in result["error"]
+
+
+def test_read_only_mode_drops_mutating_addon_tools(monkeypatch):
+    monkeypatch.setenv("AYON_MCP_READ_ONLY", "true")
+    addon_tools = parse_addon_tools(REPORTS_SPEC, "reports", "1.2.0")
+
+    ayon_tools = create_addon_ayon_tools(addon_tools)
+
+    assert [t.name for t in ayon_tools] == [
+        "reports_list_metrics",
+        "reports_query_metric",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_output_size_guard_applies_to_addon_tools():
+    addon_tools = parse_addon_tools(REPORTS_SPEC, "reports", "1.2.0")
+    client = FakeRestClient(
+        {("GET", "/api/addons/reports/1.2.0/metrics"): "x" * 2_100_000}
+    )
+    provider = AyonDynamicToolProvider(
+        create_addon_ayon_tools(addon_tools, client=client)
+    )
+
+    result = await provider.call_tool(
+        "reports_list_metrics", {"project_name": "demo"}
+    )
+
+    assert result["success"] is False
+
+
+def _bundle_routes(version: str, tool_names: list[str]) -> dict:
+    return {
+        ("GET", "/api/addons"): {
+            "addons": [{"name": "reports", "productionVersion": version}]
+        },
+        ("GET", f"/api/addons/reports/{version}/mcp/tools"): {
+            "namespace": "reports",
+            "tools": [
+                {
+                    "name": name,
+                    "endpoint": {
+                        "path": f"/api/addons/reports/{{version}}/{name}"
+                    },
+                }
+                for name in tool_names
+            ],
+        },
+    }
+
+
+def _catalog(monkeypatch, routes: dict, refresh_interval: float = 0):
+    client = FakeRestClient(routes)
+    monkeypatch.setattr(
+        addon_discovery, "RestApiClient", lambda base_url: client
+    )
+    catalog = AddonCatalog(
+        "http://ayon", "service-key", refresh_interval=refresh_interval
+    )
+    catalog.load_sync()
+    return catalog, client
+
+
+def test_catalog_follows_bundle_change(monkeypatch):
+    routes = _bundle_routes("1.0.0", ["old_tool"])
+    catalog, _ = _catalog(monkeypatch, routes, refresh_interval=1e-9)
+    provider = AyonDynamicToolProvider([], addon_catalog=catalog)
+
+    routes.update(_bundle_routes("1.1.0", ["old_tool", "new_tool"]))
+    tools = asyncio.run(provider.get_all_tools())
+
+    assert [t.name for t in tools] == [
+        "reports_old_tool",
+        "reports_new_tool",
+    ]
+    assert catalog.tools[0].addon_version == "1.1.0"
+
+
+def test_unknown_tool_forces_catalog_refresh(monkeypatch):
+    routes = _bundle_routes("1.0.0", ["old_tool"])
+    catalog, client = _catalog(monkeypatch, routes)
+    provider = AyonDynamicToolProvider([], addon_catalog=catalog)
+    routes.update(_bundle_routes("1.1.0", ["new_tool"]))
+
+    async def run() -> tuple[dict, dict]:
+        schema = await provider.get_tool_schema("reports_new_tool")
+        calls = len(client.calls)
+        # Rate limited: a second unknown name does not hit the server.
+        missing = await provider.get_tool_schema("reports_nope")
+        assert len(client.calls) == calls
+        return schema, missing
+
+    schema, missing = asyncio.run(run())
+
+    assert schema["function"]["name"] == "reports_new_tool"
+    assert missing["success"] is False
+
+
+def test_catalog_refetches_manifests_only_after_version_change(monkeypatch):
+    routes = _bundle_routes("1.0.0", ["old_tool"])
+    catalog, client = _catalog(monkeypatch, routes)
+    generation = catalog.generation
+    client.calls.clear()
+
+    asyncio.run(catalog.refresh(force=True))
+
+    assert [c["path"] for c in client.calls] == ["/api/addons"]
+    assert catalog.generation == generation
+
+
+def test_catalog_refresh_runs_as_service_not_as_caller(monkeypatch):
+    routes = _bundle_routes("1.0.0", ["old_tool"])
+    catalog, client = _catalog(monkeypatch, routes)
+    client.calls.clear()
+
+    async def run() -> None:
+        set_global_ayon_as_user("bob")
+        await catalog.refresh(force=True)
+        assert get_global_ayon_as_user() == "bob"
+
+    asyncio.run(run())
+
+    assert client.calls[0]["as_user"] is None
+    assert client.calls[0]["headers"] == {"x-api-key": "service-key"}
+
+
+def test_catalog_keeps_tools_when_refresh_fails(monkeypatch):
+    routes = _bundle_routes("1.0.0", ["old_tool"])
+    catalog, _ = _catalog(monkeypatch, routes)
+    del routes[("GET", "/api/addons")]
+
+    asyncio.run(catalog.refresh(force=True))
+
+    assert [t.full_name for t in catalog.tools] == ["reports_old_tool"]

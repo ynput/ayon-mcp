@@ -1,4 +1,4 @@
-"""Addon tool execution provider."""
+"""Addon tool execution."""
 
 from __future__ import annotations
 
@@ -20,117 +20,94 @@ logger = logging.getLogger(__name__)
 _PLACEHOLDER = re.compile(r"\{([^{}/]+)\}")
 
 
-class AddonToolProvider:
-    """Provider for executing addon MCP tools."""
+class AddonToolError(RuntimeError):
+    """An addon tool call failed before or at the addon endpoint."""
 
-    def __init__(
-        self,
-        tools: list[AddonTool],
-        client: RestApiClient | None = None,
-    ) -> None:
-        """Initialize the provider.
 
-        Args:
-            tools: List of discovered addon tools.
-            client: Optional REST client. When omitted, the process-global
-                client is resolved per call so the request-scoped API key
-                set by the auth middleware is used.
+def _resolve_path(tool: AddonTool, arguments: dict[str, Any]) -> str:
+    """Fill ``{param}`` placeholders, consuming those arguments.
 
-        """
-        self._tools = {t.full_name: t for t in tools}
-        self._client = client
+    Returns:
+        The resolved request path, still under the addon prefix.
 
-    def _resolve_client(self) -> RestApiClient:
-        return self._client or get_global_rest_client()
+    Raises:
+        AddonToolError: If a placeholder has no argument or the resolved
+            path leaves the addon prefix.
 
-    async def execute_tool(
-        self,
-        tool_name: str,
-        arguments: dict[str, Any],
-    ) -> dict[str, Any]:
-        """Execute an addon tool.
+    """
+    path = tool.endpoint.path
+    for key, value in list(arguments.items()):
+        placeholder = f"{{{key}}}"
+        if placeholder in path:
+            path = path.replace(placeholder, quote(str(value), safe=""))
+            del arguments[key]
 
-        Args:
-            tool_name: Full namespaced tool name.
-            arguments: Tool arguments from MCP call.
+    unresolved = _PLACEHOLDER.findall(path)
+    if unresolved:
+        msg = f"Missing required path argument(s): {', '.join(unresolved)}"
+        raise AddonToolError(msg)
 
-        Returns:
-            Structured result with success flag and result/error.
+    prefix = allowed_endpoint_prefix(tool.addon_name, tool.addon_version)
+    if not is_within_prefix(path, prefix):
+        msg = f"Resolved path {path!r} is outside the addon prefix {prefix!r}."
+        raise AddonToolError(msg)
+    return path
 
-        """
-        tool = self._tools.get(tool_name)
-        if tool is None:
-            return {
-                "success": False,
-                "error": f"Addon tool '{tool_name}' not found.",
-            }
 
-        method = tool.endpoint.method.upper()
-        path = tool.endpoint.path
-        arguments = dict(arguments)
+async def call_addon_tool(
+    tool: AddonTool,
+    arguments: dict[str, Any],
+    client: RestApiClient | None = None,
+) -> Any:  # ruff: ignore[any-type]
+    """Call an addon tool's endpoint with the caller's credentials.
 
-        # Substitute path parameters, e.g. /metrics/{project_name}
-        for key, value in list(arguments.items()):
-            placeholder = f"{{{key}}}"
-            if placeholder in path:
-                path = path.replace(placeholder, quote(str(value), safe=""))
-                del arguments[key]
+    Path placeholders are filled from ``arguments``; the remaining
+    arguments go to the query string for GET and to the JSON body
+    otherwise.
 
-        unresolved = _PLACEHOLDER.findall(path)
-        if unresolved:
-            return {
-                "success": False,
-                "error": (
-                    f"Missing required path argument(s): "
-                    f"{', '.join(unresolved)}"
-                ),
-            }
+    Args:
+        tool: The discovered addon tool.
+        arguments: Tool arguments from the MCP call.
+        client: Optional REST client. When omitted, the process-global
+            client is resolved per call so the request-scoped API key
+            (or ``x-as-user`` in tunnel mode) set by the auth middleware
+            is used and the addon's own ACL applies.
 
-        prefix = allowed_endpoint_prefix(tool.addon_name, tool.addon_version)
-        if not is_within_prefix(path, prefix):
-            return {
-                "success": False,
-                "error": (
-                    f"Resolved path {path!r} is outside the addon "
-                    f"prefix {prefix!r}."
-                ),
-            }
+    Returns:
+        The parsed endpoint response.
 
-        client = self._resolve_client()
-        try:
-            if method == "GET":
-                response = await client.request(
-                    method=method,
-                    path=path,
-                    params=arguments or None,
-                )
-            else:
-                response = await client.request(
-                    method=method,
-                    path=path,
-                    json=arguments or None,
-                )
-        except httpx.HTTPStatusError as exc:
-            detail = exc.response.text[:500]
-            logger.warning(
-                "Addon tool %s returned %s: %s",
-                tool_name,
-                exc.response.status_code,
-                detail,
+    Raises:
+        AddonToolError: If the path cannot be resolved, the endpoint
+            returns an error status or the request fails.
+
+    """
+    arguments = dict(arguments)
+    method = tool.endpoint.method
+    path = _resolve_path(tool, arguments)
+
+    client = client or get_global_rest_client()
+    try:
+        if method == "GET":
+            return await client.request(
+                method=method, path=path, params=arguments or None
             )
-            return {
-                "success": False,
-                "error": (
-                    f"Addon endpoint returned {exc.response.status_code}: "
-                    f"{detail}"
-                ),
-            }
-        except (httpx.HTTPError, ValueError) as exc:
-            # RestApiClient raises ValueError for malformed JSON bodies.
-            logger.warning("Addon tool %s request failed: %s", tool_name, exc)
-            return {
-                "success": False,
-                "error": f"Addon tool request failed: {exc}",
-            }
-
-        return {"success": True, "result": response}
+        return await client.request(
+            method=method, path=path, json=arguments or None
+        )
+    except httpx.HTTPStatusError as exc:
+        detail = exc.response.text[:500]
+        logger.warning(
+            "Addon tool %s returned %s: %s",
+            tool.full_name,
+            exc.response.status_code,
+            detail,
+        )
+        msg = f"Addon endpoint returned {exc.response.status_code}: {detail}"
+        raise AddonToolError(msg) from exc
+    except (httpx.HTTPError, ValueError) as exc:
+        # RestApiClient raises ValueError for malformed JSON bodies.
+        logger.warning(
+            "Addon tool %s request failed: %s", tool.full_name, exc
+        )
+        msg = f"Addon tool request failed: {exc}"
+        raise AddonToolError(msg) from exc

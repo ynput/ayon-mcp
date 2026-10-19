@@ -3,27 +3,37 @@
 from __future__ import annotations
 
 import asyncio
+import contextvars
+import json
 import logging
 import posixpath
 import re
+import time
 from dataclasses import dataclass
 from http import HTTPStatus
 from typing import Any
 from urllib.parse import unquote
 
 import httpx
+from chuk_tool_processor.guards import SideEffectClass
 
 from .rest_client import RestApiClient
-from .tool_discovery import MUTATING_HTTP_METHODS
+from .rest_policy import METHOD_SIDE_EFFECTS
 
 logger = logging.getLogger(__name__)
 
-SUPPORTED_HTTP_METHODS = frozenset({"GET", *MUTATING_HTTP_METHODS})
+SUPPORTED_HTTP_METHODS = frozenset({"GET", "POST", "PUT", "PATCH", "DELETE"})
 # MCP tool names: ^[a-zA-Z0-9_-]{1,64}$ (applies to the namespaced name).
 _TOOL_NAME_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
 _MAX_DECODE_ROUNDS = 3
 # call_ayon_tool consumes these before the call reaches the addon.
 RESERVED_PARAMETER_NAMES = frozenset({"confirm_mutation"})
+# Manifest text goes into the model's context through the discovery
+# tools, so an addon cannot flood it.
+MAX_TOOLS_PER_ADDON = 50
+MAX_DESCRIPTION_CHARS = 2_000
+MAX_PARAMETERS_BYTES = 20_000
+_SIDE_EFFECTS = {effect.value: effect for effect in SideEffectClass}
 
 
 @dataclass
@@ -45,24 +55,55 @@ class AddonTool:
     addon_name: str
     addon_version: str
     namespace: str
-    read_only: bool | None = None
+    side_effect: SideEffectClass = SideEffectClass.WRITE
 
     @property
     def full_name(self) -> str:
         """The namespaced tool name."""
         return f"{self.namespace}_{self.name}"
 
-    @property
-    def requires_confirmation(self) -> bool:
-        """Whether this tool mutates data.
 
-        An explicit ``readOnly`` flag from the addon wins. Without it the
-        HTTP method decides, so a POST used for a read-only query must be
-        declared ``readOnly: true`` to skip the confirmation step.
-        """
-        if self.read_only is not None:
-            return not self.read_only
-        return self.endpoint.method.upper() in MUTATING_HTTP_METHODS
+def declared_side_effect(
+    tool_def: dict[str, Any],
+    method: str,
+    full_name: str,
+) -> SideEffectClass:
+    """Classify an addon tool from its manifest entry.
+
+    The manifest is the addon's own policy table: the HTTP method alone
+    misclassifies AYON endpoints (a POST query that only reads), so the
+    addon declares the effect per tool. ``sideEffect`` (``read_only`` /
+    ``write`` / ``destructive``) wins, then ``readOnly``; without either
+    the method default from ``rest_policy`` applies, which fails closed
+    for anything but GET.
+
+    Returns:
+        The tool's ``SideEffectClass``.
+
+    """
+    default = METHOD_SIDE_EFFECTS[method]
+    declared = tool_def.get("sideEffect")
+    if declared is not None:
+        effect = (
+            _SIDE_EFFECTS.get(declared.lower())
+            if isinstance(declared, str)
+            else None
+        )
+        if effect is not None:
+            return effect
+        logger.warning(
+            "Addon tool %s: unknown sideEffect %r, using %s",
+            full_name,
+            declared,
+            default.value,
+        )
+        return default
+    read_only = tool_def.get("readOnly")
+    if read_only is True:
+        return SideEffectClass.READ_ONLY
+    if read_only is False and default is SideEffectClass.READ_ONLY:
+        return SideEffectClass.WRITE
+    return default
 
 
 def allowed_endpoint_prefix(addon_name: str, addon_version: str) -> str:
@@ -241,10 +282,33 @@ def _parse_tool(
         return None
 
     description = tool_def.get("description", "")
+    if not isinstance(description, str):
+        description = ""
+    if len(description) > MAX_DESCRIPTION_CHARS:
+        logger.warning(
+            "Addon tool %s: description truncated to %d characters",
+            full_name,
+            MAX_DESCRIPTION_CHARS,
+        )
+        description = description[:MAX_DESCRIPTION_CHARS]
     parameters = tool_def.get("parameters", {})
-    properties = parameters.get("properties") if isinstance(
-        parameters, dict
-    ) else None
+    if not isinstance(parameters, dict):
+        parameters = {}
+    try:
+        parameters_size = len(json.dumps(parameters))
+    except (TypeError, ValueError):
+        logger.warning(
+            "Skipping addon tool %s: parameters are not JSON", full_name
+        )
+        return None
+    if parameters_size > MAX_PARAMETERS_BYTES:
+        logger.warning(
+            "Skipping addon tool %s: parameters schema exceeds %d bytes",
+            full_name,
+            MAX_PARAMETERS_BYTES,
+        )
+        return None
+    properties = parameters.get("properties")
     if isinstance(properties, dict) and any(
         key in properties for key in RESERVED_PARAMETER_NAMES
     ):
@@ -254,16 +318,15 @@ def _parse_tool(
             ", ".join(sorted(RESERVED_PARAMETER_NAMES)),
         )
         return None
-    read_only = tool_def.get("readOnly")
     return AddonTool(
         name=name,
-        description=description if isinstance(description, str) else "",
-        parameters=parameters if isinstance(parameters, dict) else {},
+        description=description,
+        parameters=parameters,
         endpoint=endpoint,
         addon_name=addon_name,
         addon_version=addon_version,
         namespace=namespace,
-        read_only=read_only if isinstance(read_only, bool) else None,
+        side_effect=declared_side_effect(tool_def, endpoint.method, full_name),
     )
 
 
@@ -297,6 +360,16 @@ def parse_addon_tools(
     namespace = mcp_spec.get("namespace")
     if not isinstance(namespace, str) or not namespace:
         namespace = addon_name
+
+    if len(tool_defs) > MAX_TOOLS_PER_ADDON:
+        logger.warning(
+            "Addon %s/%s lists %d tools, only the first %d are used",
+            addon_name,
+            addon_version,
+            len(tool_defs),
+            MAX_TOOLS_PER_ADDON,
+        )
+        tool_defs = tool_defs[:MAX_TOOLS_PER_ADDON]
 
     tools: list[AddonTool] = []
     for tool_def in tool_defs:
@@ -404,11 +477,32 @@ async def _discover_one_addon(
     return tools
 
 
+async def resolve_addon_targets(
+    client: RestApiClient,
+    api_key: str = "",
+    timeout: float = 10.0,  # ruff: ignore[async-function-with-timeout]
+    variant: str = "production",
+) -> list[tuple[str, str]]:
+    """Return the ``(addon_name, version)`` pairs active in ``variant``.
+
+    Returns:
+        The addon versions to ask for MCP tools, in server order.
+
+    """
+    addons = await asyncio.wait_for(
+        fetch_addons(client, api_key), timeout=timeout
+    )
+    return await asyncio.wait_for(
+        _resolve_targets(client, addons, variant, api_key), timeout=timeout
+    )
+
+
 async def discover_addon_tools(
     client: RestApiClient,
     api_key: str = "",
     timeout: float = 10.0,  # ruff: ignore[async-function-with-timeout]
     variant: str = "production",
+    targets: list[tuple[str, str]] | None = None,
 ) -> list[AddonTool]:
     """Discover MCP tools from addons active in the given variant.
 
@@ -417,21 +511,20 @@ async def discover_addon_tools(
 
     Args:
         client: REST client configured with AYON server URL.
-        api_key: API key used for discovery requests at startup.
+        api_key: API key used for discovery requests.
         timeout: Per-request timeout in seconds.
         variant: ``production``, ``staging`` or a dev bundle name.
+        targets: Already resolved ``(addon_name, version)`` pairs; resolved
+            from ``variant`` when omitted.
 
     Returns:
         List of all discovered addon tools.
 
     """
-    addons = await asyncio.wait_for(
-        fetch_addons(client, api_key), timeout=timeout
-    )
-
-    targets = await asyncio.wait_for(
-        _resolve_targets(client, addons, variant, api_key), timeout=timeout
-    )
+    if targets is None:
+        targets = await resolve_addon_targets(
+            client, api_key, timeout, variant
+        )
 
     results = await asyncio.gather(
         *(
@@ -465,39 +558,132 @@ async def discover_addon_tools(
     return all_tools
 
 
-def discover_addon_tools_sync(
-    base_url: str,
-    api_key: str = "",
-    timeout: float = 10.0,
-    variant: str = "production",
-) -> list[AddonTool]:
-    """Run addon discovery from synchronous startup code.
+# A model asking for a tool this replica does not know triggers a re-check,
+# at most this often, so unknown names cannot hammer the server.
+FORCED_REFRESH_INTERVAL = 10.0
 
-    Mirrors ``fetch_openapi_spec``: opens a short-lived client, runs the
-    discovery coroutine and closes the client again. ``timeout`` applies per
-    request, not to the whole discovery.
 
-    Returns:
-        List of all discovered addon tools, empty on failure.
+class AddonCatalog:
+    """Addon MCP tools of one bundle variant, kept in sync with the server.
 
+    In tunnel mode several stateless replicas serve the same MCP endpoint,
+    each with its own catalog. A replica re-checks which addon versions
+    the variant uses at most every ``refresh_interval`` seconds (one
+    ``GET /api/addons``) and re-reads the manifests only when they
+    changed, bumping ``generation`` so providers rebuild their catalog.
+    Discovery always runs with the service API key, never as the user
+    whose request triggered the check.
     """
-    async def _runner() -> list[AddonTool]:
-        client = RestApiClient(base_url)
+
+    def __init__(
+        self,
+        base_url: str,
+        api_key: str,
+        variant: str = "production",
+        refresh_interval: float = 60.0,
+        timeout: float = 10.0,
+    ) -> None:
+        """Initialize an empty catalog; call ``load_sync`` at startup.
+
+        Args:
+            base_url: AYON server URL.
+            api_key: Service API key used for discovery.
+            variant: ``production``, ``staging`` or a dev bundle name.
+            refresh_interval: Seconds between bundle checks; ``0``
+                disables periodic checks (forced checks still run).
+            timeout: Per-request timeout in seconds.
+
+        """
+        self.tools: list[AddonTool] = []
+        self.generation = 0
+        self._base_url = base_url
+        self._api_key = api_key
+        self._variant = variant
+        self._refresh_interval = refresh_interval
+        self._timeout = timeout
+        self._targets: list[tuple[str, str]] | None = None
+        self._checked_at = float("-inf")
+        self._forced_at = float("-inf")
+        self._lock: asyncio.Lock | None = None
+
+    def load_sync(self) -> None:
+        """Run the first discovery from synchronous startup code.
+
+        Failures are logged and leave the catalog empty: discovery must
+        never prevent the MCP server from starting.
+        """
+        self._checked_at = time.monotonic()
+        asyncio.run(self._load_logged())
+
+    async def refresh(self, *, force: bool = False) -> None:
+        """Re-discover addon tools if the bundle check is due.
+
+        Args:
+            force: Check now (rate limited by ``FORCED_REFRESH_INTERVAL``)
+                instead of waiting for ``refresh_interval``.
+
+        """
+        started = time.monotonic()
+        if force:
+            if started - self._forced_at < FORCED_REFRESH_INTERVAL:
+                return
+        elif (
+            self._refresh_interval <= 0
+            or started - self._checked_at < self._refresh_interval
+        ):
+            return
+
+        if self._lock is None:
+            self._lock = asyncio.Lock()
+        async with self._lock:
+            if self._checked_at >= started:
+                # A concurrent call refreshed while this one waited.
+                return
+            if force:
+                self._forced_at = started
+            self._checked_at = time.monotonic()
+            # An empty context drops the caller's x-as-user identity.
+            await asyncio.create_task(
+                self._load_logged(), context=contextvars.Context()
+            )
+
+    async def _load(self) -> None:
+        client = RestApiClient(self._base_url)
         try:
-            return await discover_addon_tools(
-                client, api_key, timeout, variant
+            targets = await resolve_addon_targets(
+                client, self._api_key, self._timeout, self._variant
+            )
+            if targets == self._targets:
+                return
+            tools = await discover_addon_tools(
+                client,
+                self._api_key,
+                self._timeout,
+                self._variant,
+                targets=targets,
             )
         finally:
             await client.close()
+        if self._targets is not None:
+            logger.info(
+                "Addon versions of %r changed, %d addon MCP tools now",
+                self._variant,
+                len(tools),
+            )
+        self._targets = targets
+        self.tools = tools
+        self.generation += 1
 
-    try:
-        return asyncio.run(_runner())
-    except (httpx.HTTPError, TimeoutError) as exc:
-        logger.warning(
-            "Addon MCP tool discovery failed for %s: %s", base_url, exc
-        )
-        return []
-    except Exception:
-        # Discovery must never prevent the MCP server from starting.
-        logger.exception("Addon MCP tool discovery crashed")
-        return []
+    async def _load_logged(self) -> None:
+        """Run ``_load``, keeping the current tools when it fails."""
+        try:
+            await self._load()
+        except (httpx.HTTPError, TimeoutError) as exc:
+            logger.warning(
+                "Addon MCP tool discovery failed for %s: %s",
+                self._base_url,
+                exc,
+            )
+        except Exception:
+            # Discovery must never break the MCP server.
+            logger.exception("Addon MCP tool discovery crashed")

@@ -125,7 +125,10 @@ class FakeRestClient:
             raise httpx.HTTPStatusError(
                 "404", request=request, response=response
             )
-        return self.routes[key]
+        result = self.routes[key]
+        if isinstance(result, Exception):
+            raise result
+        return result
 
 
 def get_project(project_name: str) -> dict[str, str]:
@@ -156,6 +159,14 @@ def test_parse_addon_tools_prefixes_namespace_and_resolves_version():
         ("PATCH", {}, SideEffectClass.WRITE),
         ("DELETE", {}, SideEffectClass.DESTRUCTIVE),
         ("DELETE", {"readOnly": False}, SideEffectClass.DESTRUCTIVE),
+        # the method is a minimum: only POST may be declared read-only
+        ("PUT", {"readOnly": True}, SideEffectClass.WRITE),
+        ("PATCH", {"readOnly": True}, SideEffectClass.WRITE),
+        ("DELETE", {"readOnly": True}, SideEffectClass.DESTRUCTIVE),
+        ("PUT", {"sideEffect": "read_only"}, SideEffectClass.WRITE),
+        ("PATCH", {"sideEffect": "read_only"}, SideEffectClass.WRITE),
+        ("DELETE", {"sideEffect": "read_only"}, SideEffectClass.DESTRUCTIVE),
+        ("POST", {"sideEffect": "read_only"}, SideEffectClass.READ_ONLY),
         ("GET", {"readOnly": False}, SideEffectClass.WRITE),
         ("POST", {"readOnly": True}, SideEffectClass.READ_ONLY),
         ("POST", {"sideEffect": "destructive"}, SideEffectClass.DESTRUCTIVE),
@@ -887,3 +898,53 @@ def test_catalog_keeps_tools_when_refresh_fails(monkeypatch):
     asyncio.run(catalog.refresh(force=True))
 
     assert [t.full_name for t in catalog.tools] == ["reports_old_tool"]
+
+
+def _server_error(path: str) -> httpx.HTTPStatusError:
+    request = httpx.Request("GET", f"http://ayon{path}")
+    response = httpx.Response(503, request=request, text="unavailable")
+    return httpx.HTTPStatusError("503", request=request, response=response)
+
+
+def test_catalog_retries_addon_that_failed_at_startup(monkeypatch):
+    path = "/api/addons/reports/1.0.0/mcp/tools"
+    routes = _bundle_routes("1.0.0", ["late_tool"])
+    working = routes[("GET", path)]
+    routes[("GET", path)] = _server_error(path)
+    catalog, client = _catalog(monkeypatch, routes)
+    assert catalog.tools == []
+    generation = catalog.generation
+
+    routes[("GET", path)] = working
+    client.calls.clear()
+    asyncio.run(catalog.refresh(force=True))
+
+    assert [t.full_name for t in catalog.tools] == ["reports_late_tool"]
+    assert catalog.generation == generation + 1
+    assert [c["path"] for c in client.calls] == ["/api/addons", path]
+
+
+def test_catalog_does_not_retry_addon_without_mcp_endpoint(monkeypatch):
+    routes = _bundle_routes("1.0.0", ["tool"])
+    del routes[("GET", "/api/addons/reports/1.0.0/mcp/tools")]
+    catalog, client = _catalog(monkeypatch, routes)
+    client.calls.clear()
+
+    asyncio.run(catalog.refresh(force=True))
+
+    assert [c["path"] for c in client.calls] == ["/api/addons"]
+
+
+def test_catalog_keeps_retrying_while_addon_keeps_failing(monkeypatch):
+    path = "/api/addons/reports/1.0.0/mcp/tools"
+    routes = _bundle_routes("1.0.0", ["tool"])
+    routes[("GET", path)] = _server_error(path)
+    catalog, client = _catalog(monkeypatch, routes)
+    generation = catalog.generation
+    client.calls.clear()
+
+    asyncio.run(catalog.refresh(force=True))
+
+    assert [c["path"] for c in client.calls] == ["/api/addons", path]
+    assert catalog.tools == []
+    assert catalog.generation == generation

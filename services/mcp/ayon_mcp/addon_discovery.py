@@ -18,7 +18,7 @@ import httpx
 from chuk_tool_processor.guards import SideEffectClass
 
 from .rest_client import RestApiClient
-from .rest_policy import METHOD_SIDE_EFFECTS
+from .rest_policy import METHOD_SIDE_EFFECTS, SIDE_EFFECT_RANK
 
 logger = logging.getLogger(__name__)
 
@@ -63,9 +63,10 @@ class AddonTool:
         return f"{self.namespace}_{self.name}"
 
 
-# Methods whose default is never relaxed by a manifest. Only POST may be
-# declared read-only (query endpoints that carry a body).
-_NEVER_READ_ONLY_METHODS = frozenset({"PUT", "PATCH", "DELETE"})
+# Methods whose default is a minimum a manifest cannot relax: PUT / PATCH
+# stay at least write, DELETE stays destructive. Only POST may be declared
+# lower than its default (query endpoints that carry a body).
+_MINIMUM_METHODS = frozenset({"PUT", "PATCH", "DELETE"})
 
 
 def declared_side_effect(
@@ -80,9 +81,9 @@ def declared_side_effect(
     addon declares the effect per tool. ``sideEffect`` (``read_only`` /
     ``write`` / ``destructive``) wins, then ``readOnly``; without either
     the method default from ``rest_policy`` applies, which fails closed
-    for anything but GET. The method is a minimum: ``PUT``, ``PATCH`` and
-    ``DELETE`` can never be declared read-only, so they stay behind
-    ``confirm_mutation`` and out of read-only mode.
+    for anything but GET. The method is a minimum: ``PUT`` and ``PATCH``
+    can never be declared read-only and ``DELETE`` is always destructive,
+    so they stay behind ``confirm_mutation`` and out of read-only mode.
 
     Returns:
         The tool's ``SideEffectClass``.
@@ -90,13 +91,14 @@ def declared_side_effect(
     """
     default = METHOD_SIDE_EFFECTS[method]
     effect = _declared_effect(tool_def, default, full_name)
-    if effect is SideEffectClass.READ_ONLY and (
-        method in _NEVER_READ_ONLY_METHODS
+    if method in _MINIMUM_METHODS and (
+        SIDE_EFFECT_RANK[effect] < SIDE_EFFECT_RANK[default]
     ):
         logger.warning(
-            "Addon tool %s: %s cannot be read only, using %s",
+            "Addon tool %s: %s cannot be %s, using %s",
             full_name,
             method,
+            effect.value,
             default.value,
         )
         return default

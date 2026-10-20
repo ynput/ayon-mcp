@@ -159,13 +159,15 @@ def test_parse_addon_tools_prefixes_namespace_and_resolves_version():
         ("PATCH", {}, SideEffectClass.WRITE),
         ("DELETE", {}, SideEffectClass.DESTRUCTIVE),
         ("DELETE", {"readOnly": False}, SideEffectClass.DESTRUCTIVE),
-        # the method is a minimum: only POST may be declared read-only
+        # the method is a minimum: only POST may be declared lower
         ("PUT", {"readOnly": True}, SideEffectClass.WRITE),
         ("PATCH", {"readOnly": True}, SideEffectClass.WRITE),
         ("DELETE", {"readOnly": True}, SideEffectClass.DESTRUCTIVE),
         ("PUT", {"sideEffect": "read_only"}, SideEffectClass.WRITE),
         ("PATCH", {"sideEffect": "read_only"}, SideEffectClass.WRITE),
         ("DELETE", {"sideEffect": "read_only"}, SideEffectClass.DESTRUCTIVE),
+        ("DELETE", {"sideEffect": "write"}, SideEffectClass.DESTRUCTIVE),
+        ("PATCH", {"sideEffect": "destructive"}, SideEffectClass.DESTRUCTIVE),
         ("POST", {"sideEffect": "read_only"}, SideEffectClass.READ_ONLY),
         ("GET", {"readOnly": False}, SideEffectClass.WRITE),
         ("POST", {"readOnly": True}, SideEffectClass.READ_ONLY),

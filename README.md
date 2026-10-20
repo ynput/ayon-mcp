@@ -364,10 +364,11 @@ The addon endpoint returns:
   `x-as-user` in tunnel mode, and the configured `AYON_API_KEY` in local
   mode (a service or admin key there means addon tools run with admin
   rights).
-- The HTTP method is a minimum: `PUT`, `PATCH` and `DELETE` tools can never
-  be declared read-only (the manifest value is ignored with a warning), so
-  they always need `confirm_mutation` and are hidden in read-only mode.
-  Only `POST` may be declared read-only.
+- The HTTP method is a minimum: `PUT` and `PATCH` tools can never be
+  declared read-only and `DELETE` tools are always destructive (a lower
+  manifest value is ignored with a warning), so they always need
+  `confirm_mutation` and are hidden in read-only mode. Only `POST` may be
+  declared lower than its default.
 - An addon whose `/mcp/tools` request fails (5xx, timeout, network) is
   retried on every refresh; an addon answering 404 is not.
 

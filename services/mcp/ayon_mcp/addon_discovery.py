@@ -226,8 +226,9 @@ async def fetch_addon_mcp_tools(
         unexpected body).
 
     Raises:
-        httpx.HTTPError: The request failed (5xx, 403, network error);
-            the addon may expose tools, so the caller should retry later.
+        httpx.HTTPStatusError: The addon answered with an error other than
+            404 (5xx, 403); it may expose tools, so the caller should retry.
+        httpx.HTTPError: The request failed (network error, timeout).
         ValueError: The response was not valid JSON.
 
     """
@@ -294,6 +295,46 @@ def _parse_endpoint(
     return AddonToolEndpoint(method=method.upper(), path=path)
 
 
+def _parse_parameters(
+    tool_def: dict[str, Any], full_name: str
+) -> dict[str, Any] | None:
+    """Validate a tool's ``parameters`` schema, logging why it was skipped.
+
+    Returns:
+        The schema (``{}`` when missing or not an object), or None when the
+        tool must be skipped.
+
+    """
+    parameters = tool_def.get("parameters", {})
+    if not isinstance(parameters, dict):
+        parameters = {}
+    try:
+        parameters_size = len(json.dumps(parameters))
+    except (TypeError, ValueError):
+        logger.warning(
+            "Skipping addon tool %s: parameters are not JSON", full_name
+        )
+        return None
+    if parameters_size > MAX_PARAMETERS_BYTES:
+        logger.warning(
+            "Skipping addon tool %s: parameters schema exceeds %d bytes",
+            full_name,
+            MAX_PARAMETERS_BYTES,
+        )
+        return None
+    properties = parameters.get("properties")
+    if isinstance(properties, dict) and any(
+        key in properties for key in RESERVED_PARAMETER_NAMES
+    ):
+        logger.warning(
+            "Skipping addon tool %s: parameters use a reserved name (%s)",
+            full_name,
+            ", ".join(sorted(RESERVED_PARAMETER_NAMES)),
+        )
+        return None
+    return parameters
+
+
 def _parse_tool(
     tool_def: Any,  # ruff: ignore[any-type]
     namespace: str,
@@ -333,32 +374,8 @@ def _parse_tool(
             MAX_DESCRIPTION_CHARS,
         )
         description = description[:MAX_DESCRIPTION_CHARS]
-    parameters = tool_def.get("parameters", {})
-    if not isinstance(parameters, dict):
-        parameters = {}
-    try:
-        parameters_size = len(json.dumps(parameters))
-    except (TypeError, ValueError):
-        logger.warning(
-            "Skipping addon tool %s: parameters are not JSON", full_name
-        )
-        return None
-    if parameters_size > MAX_PARAMETERS_BYTES:
-        logger.warning(
-            "Skipping addon tool %s: parameters schema exceeds %d bytes",
-            full_name,
-            MAX_PARAMETERS_BYTES,
-        )
-        return None
-    properties = parameters.get("properties")
-    if isinstance(properties, dict) and any(
-        key in properties for key in RESERVED_PARAMETER_NAMES
-    ):
-        logger.warning(
-            "Skipping addon tool %s: parameters use a reserved name (%s)",
-            full_name,
-            ", ".join(sorted(RESERVED_PARAMETER_NAMES)),
-        )
+    parameters = _parse_parameters(tool_def, full_name)
+    if parameters is None:
         return None
     return AddonTool(
         name=name,

@@ -9,6 +9,7 @@ import os
 from collections import OrderedDict
 from typing import TYPE_CHECKING, AsyncIterator
 
+import httpx
 from fastmcp import FastMCP
 from fastmcp.server.dependencies import get_http_headers
 from fastmcp.server.lifespan import lifespan
@@ -270,9 +271,10 @@ def create_mcp_server(base_url: str, api_key: str) -> FastMCP:
             )
             if changed:
                 importlib.reload(tools_module)
-        except (OSError, TypeError, ValueError) as exc:
+        # AYON down or slow: keep the generated tools, never fail start
+        except (httpx.HTTPError, OSError, TypeError, ValueError) as exc:
             logger.warning(
-                "OpenAPI tool sync failed for %s/openapi.json: %s",
+                "OpenAPI tool sync failed for %s/openapi.json: %r",
                 base_url.rstrip("/"),
                 exc,
             )

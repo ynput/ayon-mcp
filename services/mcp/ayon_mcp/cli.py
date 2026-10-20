@@ -22,14 +22,14 @@ def build_server_url(host: str, port: int) -> str:
     """Join a ``--host`` value and ``--port`` into the AYON server URL.
 
     ``host`` may be a bare host, ``host:port`` or a full URL; a port inside
-    ``host`` wins over ``port``.
+    ``host`` wins over ``port``. A host without a scheme gets ``http://``.
 
     Args:
         host: Host name or URL, with or without scheme and port.
         port: Port used when ``host`` carries none.
 
     Returns:
-        The server URL as ``[scheme://]host:port[path]``.
+        The server URL as ``scheme://host:port[path]``.
 
     Raises:
         click.UsageError: If the port in ``host`` is not valid.
@@ -44,7 +44,7 @@ def build_server_url(host: str, port: int) -> str:
             "Port must be an integer.")
         raise click.UsageError(msg) from e
 
-    scheme = f"{parts.scheme}://" if parts.scheme else ""
+    scheme = f"{parts.scheme or 'http'}://"
     hostname = parts.netloc.rpartition("@")[2]
     if url_port is not None:
         hostname = hostname.rpartition(":")[0]

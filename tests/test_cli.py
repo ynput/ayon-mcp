@@ -16,11 +16,12 @@ from ayon_mcp.cli import DEFAULT_PORT, build_server_url
             "https://ayon.example.com/",
             f"https://ayon.example.com:{DEFAULT_PORT}",
         ),
-        ("localhost", f"localhost:{DEFAULT_PORT}"),
+        # a host without a scheme gets http://
+        ("localhost", f"http://localhost:{DEFAULT_PORT}"),
         ("http://[::1]", f"http://[::1]:{DEFAULT_PORT}"),
         # a port in the host wins over --port
         ("http://localhost:8080", "http://localhost:8080"),
-        ("localhost:8080", "localhost:8080"),
+        ("localhost:8080", "http://localhost:8080"),
         ("http://[::1]:8080", "http://[::1]:8080"),
     ],
 )

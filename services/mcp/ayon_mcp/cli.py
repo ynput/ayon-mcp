@@ -22,14 +22,15 @@ def build_server_url(host: str, port: int) -> str:
     """Join a ``--host`` value and ``--port`` into the AYON server URL.
 
     ``host`` may be a bare host, ``host:port`` or a full URL; a port inside
-    ``host`` wins over ``port``. A host without a scheme gets ``http://``.
+    ``host`` wins over ``port``. A host without a scheme gets ``http://``;
+    an ``https://`` host without a port keeps the scheme's default (443).
 
     Args:
         host: Host name or URL, with or without scheme and port.
         port: Port used when ``host`` carries none.
 
     Returns:
-        The server URL as ``scheme://host:port[path]``.
+        The server URL as ``scheme://host[:port][path]``.
 
     Raises:
         click.UsageError: If the port in ``host`` is not valid.
@@ -46,9 +47,9 @@ def build_server_url(host: str, port: int) -> str:
 
     scheme = f"{parts.scheme or 'http'}://"
     hostname = parts.netloc.rpartition("@")[2]
-    if url_port is not None:
-        hostname = hostname.rpartition(":")[0]
-    return f"{scheme}{hostname}:{port if url_port is None else url_port}{parts.path.rstrip('/')}"
+    if url_port is None and parts.scheme != "https":
+        hostname = f"{hostname}:{port}"
+    return f"{scheme}{hostname}{parts.path.rstrip('/')}"
 
 
 @click.command()
@@ -72,7 +73,11 @@ def build_server_url(host: str, port: int) -> str:
 )
 @click.option(
     "--port", "-p",
-    default=DEFAULT_PORT, type=int, help="AYON server port (default 5000)")
+    default=DEFAULT_PORT, type=int,
+    help=(
+        "AYON server port when --host has none "
+        "(default 5000, not added to https:// hosts)"
+    ))
 @click.option(
     "--api-key",
     default=None,

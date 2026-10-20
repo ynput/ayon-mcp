@@ -12,10 +12,9 @@ from ayon_mcp.cli import DEFAULT_PORT, build_server_url
     [
         # the default --host has a scheme but no port
         ("http://localhost", f"http://localhost:{DEFAULT_PORT}"),
-        (
-            "https://ayon.example.com/",
-            f"https://ayon.example.com:{DEFAULT_PORT}",
-        ),
+        # https without a port keeps its default port
+        ("https://ayon.example.com/", "https://ayon.example.com"),
+        ("https://ayon.example.com:8443", "https://ayon.example.com:8443"),
         # a host without a scheme gets http://
         ("localhost", f"http://localhost:{DEFAULT_PORT}"),
         ("http://[::1]", f"http://[::1]:{DEFAULT_PORT}"),

@@ -177,8 +177,10 @@ def is_within_prefix(path: str, prefix: str) -> bool:
         return False
     if ".." in decoded.split("/"):
         return False
+    # normpath drops the trailing slash, so the addon root itself
+    # ("/api/addons/x/1.0/") would not match the prefix without it.
     normalised = posixpath.normpath(decoded)
-    return normalised.startswith(prefix)
+    return f"{normalised}/".startswith(prefix)
 
 
 def _auth_headers(api_key: str) -> dict[str, str] | None:
@@ -706,14 +708,29 @@ class AddonCatalog:
         self._failed_targets: set[tuple[str, str]] = set()
         self._checked_at = float("-inf")
         self._forced_at = float("-inf")
+        # Set when load_sync ran inside an event loop and could not load.
+        self._initial_load_pending = False
         self._lock: asyncio.Lock | None = None
 
     def load_sync(self) -> None:
         """Run the first discovery from synchronous startup code.
 
         Failures are logged and leave the catalog empty: discovery must
-        never prevent the MCP server from starting.
+        never prevent the MCP server from starting. Inside a running event
+        loop ``asyncio.run`` cannot be used, so the first discovery is
+        deferred to the first ``refresh``.
         """
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            pass
+        else:
+            logger.info(
+                "Event loop already running, addon MCP tool discovery "
+                "deferred to the first catalog read"
+            )
+            self._initial_load_pending = True
+            return
         self._checked_at = time.monotonic()
         asyncio.run(self._load_logged())
 
@@ -729,7 +746,7 @@ class AddonCatalog:
         if force:
             if started - self._forced_at < FORCED_REFRESH_INTERVAL:
                 return
-        elif (
+        elif not self._initial_load_pending and (
             self._refresh_interval <= 0
             or started - self._checked_at < self._refresh_interval
         ):
@@ -743,6 +760,7 @@ class AddonCatalog:
                 return
             if force:
                 self._forced_at = started
+            self._initial_load_pending = False
             self._checked_at = time.monotonic()
             # An empty context drops the caller's x-as-user identity.
             await asyncio.create_task(

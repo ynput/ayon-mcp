@@ -91,9 +91,9 @@ async def call_addon_tool(
             return await client.request(
                 method=method, path=path, params=arguments or None
             )
-        return await client.request(
-            method=method, path=path, json=arguments or None
-        )
+        # An empty object, not None: a body model with only optional
+        # fields still requires a body, otherwise the endpoint returns 422.
+        return await client.request(method=method, path=path, json=arguments)
     except httpx.HTTPStatusError as exc:
         detail = exc.response.text[:500]
         logger.warning(

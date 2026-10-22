@@ -271,6 +271,18 @@ def test_parse_addon_tools_rejects_endpoints_outside_addon_prefix():
     assert [t.name for t in tools] == ["ok"]
 
 
+def test_parse_addon_tools_accepts_addon_root_route():
+    spec = {
+        "tools": [
+            {"name": "root", "endpoint": {"path": "/api/addons/planner/{version}/"}},
+            {"name": "sibling", "endpoint": {"path": "/api/addons/planner/2.0.0x/"}},
+        ]
+    }
+    tools = parse_addon_tools(spec, "planner", "2.0.0")
+
+    assert [t.name for t in tools] == ["root"]
+
+
 @pytest.mark.asyncio
 async def test_path_argument_cannot_escape_addon_prefix():
     addon_tools = parse_addon_tools(REPORTS_SPEC, "reports", "1.2.0")
@@ -684,6 +696,27 @@ async def test_read_only_post_tool_runs_without_confirmation():
 
 
 @pytest.mark.asyncio
+async def test_post_without_body_arguments_sends_empty_object():
+    tool = AddonTool(
+        name="defaults",
+        description="",
+        parameters={},
+        endpoint=AddonToolEndpoint(
+            method="POST", path="/api/addons/x/1/items/{item_id}"
+        ),
+        addon_name="x",
+        addon_version="1",
+        namespace="x",
+    )
+    client = FakeRestClient({("POST", "/api/addons/x/1/items/a"): {}})
+
+    await call_addon_tool(tool, {"item_id": "a"}, client)
+
+    # All arguments went to the path; the body model still needs an object.
+    assert client.calls[0]["json"] == {}
+
+
+@pytest.mark.asyncio
 async def test_missing_path_argument_fails_before_request():
     addon_tools = parse_addon_tools(REPORTS_SPEC, "reports", "1.2.0")
     client = FakeRestClient({})
@@ -842,6 +875,24 @@ def test_catalog_follows_bundle_change(monkeypatch):
         "reports_new_tool",
     ]
     assert catalog.tools[0].addon_version == "1.1.0"
+
+
+def test_load_sync_in_running_loop_defers_discovery(monkeypatch):
+    client = FakeRestClient(_bundle_routes("1.0.0", ["old_tool"]))
+    monkeypatch.setattr(
+        addon_discovery, "RestApiClient", lambda base_url: client
+    )
+    catalog = AddonCatalog("http://ayon", "service-key", refresh_interval=0)
+
+    async def start_and_read():
+        catalog.load_sync()
+        assert client.calls == []
+        provider = AyonDynamicToolProvider([], addon_catalog=catalog)
+        return await provider.get_all_tools()
+
+    tools = asyncio.run(start_and_read())
+
+    assert [t.name for t in tools] == ["reports_old_tool"]
 
 
 def test_unknown_tool_forces_catalog_refresh(monkeypatch):

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+import logging
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
@@ -15,6 +16,7 @@ from chuk_tool_processor.guards import (
 )
 from fastmcp.tools.function_tool import FunctionTool
 
+from .addon_tools import call_addon_tool
 from .guardrails import (
     DESTRUCTIVE_TOOL_NAMES,
     build_guard_chain,
@@ -23,9 +25,15 @@ from .guardrails import (
 from .rest_policy import endpoint_of, is_admin, side_effect_for
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Iterable
 
     from chuk_tool_processor.guards import GuardChain
+
+    from .addon_discovery import AddonCatalog, AddonTool
+    from .rest_client import RestApiClient
+
+
+logger = logging.getLogger(__name__)
 
 
 # Sentinel: "build the guard chain from env" vs. an explicit None
@@ -153,6 +161,67 @@ def create_curated_tools(
     return tools
 
 
+def _addon_function(
+    tool: AddonTool,
+    client: RestApiClient | None,
+) -> Callable[..., Any]:
+    async def run(**arguments: Any) -> Any:  # ruff: ignore[any-type]
+        return await call_addon_tool(tool, arguments, client)
+
+    run.__name__ = tool.full_name
+    return run
+
+
+def create_addon_ayon_tools(
+    addon_tools: list[AddonTool],
+    reserved_names: Iterable[str] = (),
+    client: RestApiClient | None = None,
+) -> list[AyonTool]:
+    """Convert addon tools to AyonTool format for discovery.
+
+    Addon tools carry the side effect their addon declared, so the same
+    confirmation policy and guard chain apply as for curated tools. In
+    ``AYON_MCP_READ_ONLY`` mode only read-only addon tools are kept.
+
+    Args:
+        addon_tools: List of discovered addon tools.
+        reserved_names: Names already taken (curated tools); addon tools
+            colliding with them are skipped so an addon cannot shadow a
+            built-in tool.
+        client: REST client for the addon calls. When omitted, the
+            process-global client is resolved per call.
+
+    Returns:
+        List of AyonTool instances for the discovery provider.
+
+    """
+    read_only = read_only_enabled()
+    tools: list[AyonTool] = []
+    taken = set(reserved_names)
+    for tool in addon_tools:
+        if tool.full_name in taken:
+            logger.warning(
+                "Skipping addon tool %s from %s: name already taken",
+                tool.full_name,
+                tool.addon_name,
+            )
+            continue
+        if read_only and tool.side_effect is not SideEffectClass.READ_ONLY:
+            continue
+        taken.add(tool.full_name)
+        tools.append(
+            AyonTool(
+                name=tool.full_name,
+                namespace=f"ayon.addon.{tool.addon_name}",
+                description=tool.description,
+                parameters=tool.parameters,
+                function=_addon_function(tool, client),
+                side_effect=tool.side_effect,
+            )
+        )
+    return tools
+
+
 async def _invoke(
     function: Callable[..., Any], arguments: dict[str, Any]
 ) -> Any:  # ruff: ignore[any-type]
@@ -183,6 +252,7 @@ class AyonDynamicToolProvider(BaseDynamicToolProvider[AyonTool]):
         self,
         tools: list[AyonTool],
         guard_chain: GuardChain | object | None = _DEFAULT,
+        addon_catalog: AddonCatalog | None = None,
     ) -> None:
         """Initialize the provider with its available AYON tools.
 
@@ -194,16 +264,39 @@ class AyonDynamicToolProvider(BaseDynamicToolProvider[AyonTool]):
                 ``AYON_MCP_GUARDS=off``). Pass ``None`` explicitly to skip
                 guardrails regardless of env. ``AYON_MCP_READ_ONLY`` is
                 enforced either way.
+            addon_catalog: Source of addon tools. Its tools are appended
+                to ``tools`` and re-read whenever the catalog reports a
+                bundle change, so the catalog follows addon updates.
 
         """
         super().__init__()
+        self._base_tools = tools
+        self._addon_catalog = addon_catalog
+        self._addon_generation = -1
+        self._read_only = read_only_enabled()
+        self._explicit_guard_chain = guard_chain
+        self._set_tools(self._combined_tools())
+
+    def _combined_tools(self) -> list[AyonTool]:
+        if self._addon_catalog is None:
+            return self._base_tools
+        self._addon_generation = self._addon_catalog.generation
+        return [
+            *self._base_tools,
+            *create_addon_ayon_tools(
+                self._addon_catalog.tools,
+                reserved_names={tool.name for tool in self._base_tools},
+            ),
+        ]
+
+    def _set_tools(self, tools: list[AyonTool]) -> None:
+        """Replace the catalog and rebuild everything derived from it."""
         self._tools = tools
         self._tools_by_name = {tool.name: tool for tool in tools}
-        self._read_only = read_only_enabled()
         self._guard_chain = (
             build_guard_chain(tools)
-            if guard_chain is _DEFAULT
-            else guard_chain
+            if self._explicit_guard_chain is _DEFAULT
+            else self._explicit_guard_chain
         )
         retry_guard = (
             self._guard_chain.get("retry_safety")
@@ -213,14 +306,30 @@ class AyonDynamicToolProvider(BaseDynamicToolProvider[AyonTool]):
         self._retry_guard = (
             retry_guard if isinstance(retry_guard, RetrySafetyGuard) else None
         )
+        self.invalidate_cache()
+
+    async def _sync_addon_tools(self, *, force: bool = False) -> None:
+        """Pick up addon tools changed by a bundle update.
+
+        Every service replica discovers on its own, so a replica may not
+        know a tool another replica already listed. ``force`` re-checks
+        the server right away (rate limited by the catalog) when a tool
+        name is unknown here.
+        """
+        if self._addon_catalog is None:
+            return
+        await self._addon_catalog.refresh(force=force)
+        if self._addon_catalog.generation != self._addon_generation:
+            self._set_tools(self._combined_tools())
 
     async def get_all_tools(self) -> list[AyonTool]:
         """Return every catalogued AYON tool.
 
         Returns:
-            The stable discovery catalog.
+            The discovery catalog, refreshed after addon changes.
 
         """
+        await self._sync_addon_tools()
         return self._tools
 
     async def get_tool_schema(self, tool_name: str) -> dict[str, Any]:
@@ -237,6 +346,8 @@ class AyonDynamicToolProvider(BaseDynamicToolProvider[AyonTool]):
             An OpenAI-style function schema with confirmation metadata.
 
         """
+        if tool_name not in self._tools_by_name:
+            await self._sync_addon_tools(force=True)
         schema = await super().get_tool_schema(tool_name)
         tool = self._tools_by_name.get(
             schema.get("function", {}).get("name", tool_name)
@@ -337,6 +448,9 @@ class AyonDynamicToolProvider(BaseDynamicToolProvider[AyonTool]):
         """
         tool = self._tools_by_name.get(tool_name)
         if tool is None:
+            await self._sync_addon_tools(force=True)
+            tool = self._tools_by_name.get(tool_name)
+        if tool is None:
             return {
                 "success": False,
                 "error": f"Tool '{tool_name}' was not found.",
@@ -373,14 +487,21 @@ class AyonDynamicToolProvider(BaseDynamicToolProvider[AyonTool]):
 
 def create_discovery_tools(
     functions: list[Callable[..., Any]],
+    addon_catalog: AddonCatalog | None = None,
 ) -> list[Callable[..., Any]]:
     """Create the fixed MCP surface for discovering AYON tools on demand.
+
+    Args:
+        functions: Curated FastMCP-compatible tool functions.
+        addon_catalog: Tools discovered from AYON addons, if enabled.
 
     Returns:
         The five callable MCP discovery tools.
 
     """
-    provider = AyonDynamicToolProvider(create_curated_tools(functions))
+    provider = AyonDynamicToolProvider(
+        create_curated_tools(functions), addon_catalog=addon_catalog
+    )
 
     async def list_ayon_tools(limit: int = 50) -> dict[str, Any]:
         """List AYON tools with concise descriptions.

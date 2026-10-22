@@ -126,6 +126,11 @@ class TestGlobalClient:
 # ---------------------------------------------------------------------------
 
 class TestCreateMcpServer:
+    @pytest.fixture(autouse=True)
+    def _no_addon_discovery(self, monkeypatch):
+        # Discovery would query the real server at localhost:5000.
+        monkeypatch.setenv("AYON_MCP_ENABLE_ADDON_TOOLS", "false")
+
     def test_returns_fastmcp_instance(self):
         from ayon_mcp.server import create_mcp_server
         from fastmcp import FastMCP
@@ -174,6 +179,18 @@ class TestCreateMcpServer:
         assert registered == {
             getattr(function, "__name__", "") for function in ALL_TOOLS
         }
+
+    def test_direct_exposure_mode_skips_addon_discovery(self, monkeypatch):
+        from ayon_mcp import server as server_module
+
+        catalog = MagicMock()
+        monkeypatch.setattr(server_module, "AddonCatalog", catalog)
+        monkeypatch.setenv("AYON_MCP_TOOL_EXPOSURE", "direct")
+        monkeypatch.delenv("AYON_MCP_ENABLE_ADDON_TOOLS", raising=False)
+
+        server_module.create_mcp_server("http://localhost:5000", "key")
+
+        catalog.assert_not_called()
 
     def test_admin_rest_tools_are_not_registered_by_default(
         self, monkeypatch

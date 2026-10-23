@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+from urllib.parse import urlsplit
 
 import click
 
@@ -15,6 +16,52 @@ KEY_ENV_VAR = "AYON_API_KEY"
 
 DEFAULT_HOST = "http://localhost"
 DEFAULT_PORT = 5000
+
+
+def build_server_url(host: str, port: int) -> str:
+    """Join a ``--host`` value and ``--port`` into the AYON server URL.
+
+    ``host`` may be a bare host, ``host:port`` or a full URL; a port inside
+    ``host`` wins over ``port``. A host without a scheme gets ``http://``;
+    an ``https://`` host without a port keeps the scheme's default (443).
+
+    Args:
+        host: Host name or URL, with or without scheme and port.
+        port: Port used when ``host`` carries none.
+
+    Returns:
+        The server URL as ``scheme://host[:port][path]``.
+
+    Raises:
+        click.UsageError: If ``host`` has no host name, a scheme other
+            than http or https, or an invalid port.
+
+    """
+    host = host.strip()
+    # Only "://" marks a scheme: "//" alone may be repeated path slashes.
+    parts = urlsplit(host if "://" in host else f"//{host}")
+    try:
+        url_port = parts.port
+    except ValueError as e:
+        msg = f"Invalid port number in host URL: {host!r} ({e})."
+        raise click.UsageError(msg) from e
+
+    scheme = parts.scheme or "http"
+    if scheme not in {"http", "https"}:
+        msg = f"Unsupported scheme in host URL: {host!r} (use http or https)."
+        raise click.UsageError(msg)
+    # hostname drops credentials and an empty port ("localhost:"), but
+    # also the brackets of an IPv6 address.
+    hostname = parts.hostname
+    if not hostname:
+        msg = f"No host name in host URL: {host!r}."
+        raise click.UsageError(msg)
+    if ":" in hostname:
+        hostname = f"[{hostname}]"
+    if url_port is None and scheme != "https":
+        url_port = port
+    netloc = hostname if url_port is None else f"{hostname}:{url_port}"
+    return f"{scheme}://{netloc}{parts.path.rstrip('/')}"
 
 
 @click.command()
@@ -38,7 +85,11 @@ DEFAULT_PORT = 5000
 )
 @click.option(
     "--port", "-p",
-    default=DEFAULT_PORT, type=int, help="AYON server port (default 5000)")
+    default=DEFAULT_PORT, type=int,
+    help=(
+        "AYON server port when --host has none "
+        "(default 5000, not added to https:// hosts)"
+    ))
 @click.option(
     "--api-key",
     default=None,
@@ -66,17 +117,7 @@ def main(
         click.UsageError: If required arguments are missing or invalid.
 
     """
-    if ":" in host:
-        host, port_str = host.rsplit(":", 1)
-        try:
-            port = int(port_str)
-        except ValueError as e:
-            msg = (
-                f"Invalid port number in host URL: {port_str!r}. "
-                "Port must be an integer.")
-            raise click.UsageError(msg) from e
-
-    server_url = f"{host}:{port}"
+    server_url = build_server_url(host, port)
     if not api_key:
         api_key = os.getenv(KEY_ENV_VAR)
         if not api_key:

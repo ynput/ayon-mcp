@@ -33,23 +33,35 @@ def build_server_url(host: str, port: int) -> str:
         The server URL as ``scheme://host[:port][path]``.
 
     Raises:
-        click.UsageError: If the port in ``host`` is not valid.
+        click.UsageError: If ``host`` has no host name, a scheme other
+            than http or https, or an invalid port.
 
     """
-    parts = urlsplit(host if "//" in host else f"//{host}")
+    host = host.strip()
+    # Only "://" marks a scheme: "//" alone may be repeated path slashes.
+    parts = urlsplit(host if "://" in host else f"//{host}")
     try:
         url_port = parts.port
     except ValueError as e:
-        msg = (
-            f"Invalid port number in host URL: {host!r}. "
-            "Port must be an integer.")
+        msg = f"Invalid port number in host URL: {host!r} ({e})."
         raise click.UsageError(msg) from e
 
-    scheme = f"{parts.scheme or 'http'}://"
-    hostname = parts.netloc.rpartition("@")[2]
-    if url_port is None and parts.scheme != "https":
-        hostname = f"{hostname}:{port}"
-    return f"{scheme}{hostname}{parts.path.rstrip('/')}"
+    scheme = parts.scheme or "http"
+    if scheme not in {"http", "https"}:
+        msg = f"Unsupported scheme in host URL: {host!r} (use http or https)."
+        raise click.UsageError(msg)
+    # hostname drops credentials and an empty port ("localhost:"), but
+    # also the brackets of an IPv6 address.
+    hostname = parts.hostname
+    if not hostname:
+        msg = f"No host name in host URL: {host!r}."
+        raise click.UsageError(msg)
+    if ":" in hostname:
+        hostname = f"[{hostname}]"
+    if url_port is None and scheme != "https":
+        url_port = port
+    netloc = hostname if url_port is None else f"{hostname}:{url_port}"
+    return f"{scheme}://{netloc}{parts.path.rstrip('/')}"
 
 
 @click.command()

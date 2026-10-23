@@ -109,20 +109,21 @@ def snippet(fmt: str, url: str, key: str) -> tuple[str, str]:
         )
         return text, how
     if fmt == "desktop":
-        entry = {
-            "command": "npx",
-            "args": [
-                "-y", "mcp-remote", url,
-                "--header", "x-api-key:${AYON_KEY}",
-            ],
-            "env": {"AYON_KEY": key},
-        }
-        text = f'"{SERVER_NAME}": ' + json.dumps(entry, indent=2)
+        args = ["-y", "mcp-remote", url, "--header", "x-api-key:${AYON_KEY}"]
         how = (
             'Paste it inside "mcpServers" in claude_desktop_config.json '
             "(Settings, Developer, Edit Config), then quit and reopen "
             "Claude Desktop. It needs Node.js 18 or newer."
         )
+        # mcp-remote refuses plain HTTP except on localhost / 127.0.0.1.
+        if url.startswith("http://"):
+            args.append("--allow-http")
+            how += (
+                " This server uses plain HTTP, so the key travels "
+                "unencrypted: prefer HTTPS outside a trusted network."
+            )
+        entry = {"command": "npx", "args": args, "env": {"AYON_KEY": key}}
+        text = f'"{SERVER_NAME}": ' + json.dumps(entry, indent=2)
         return text, how
     # Quoted: an IPv6 host ("[::1]") is a glob pattern, and zsh refuses
     # to run a command whose glob matches nothing.
@@ -197,7 +198,12 @@ async def get_actions(
 
     """
     settings = await _settings(addon, variant)
-    if not settings.enabled or not _project_allowed(settings, project_name):
+    if not settings.enabled:
+        return []
+    # Without a project AYON enumerates actions for the access group
+    # "Restrict actions" picker, so the action must be listed there.
+    # Running it still needs an allowed project (see _refusal).
+    if project_name and not _project_allowed(settings, project_name):
         return []
     return [
         SimpleActionManifest(

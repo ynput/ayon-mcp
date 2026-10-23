@@ -19,6 +19,7 @@ from __future__ import annotations
 import json
 import re
 import secrets
+import shlex
 import time
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
@@ -60,6 +61,9 @@ APPEND_KEY_SQL = """
     )
     WHERE name = $2
 """
+
+# A dev bundle's name is its variant.
+DEV_BUNDLE_SQL = "SELECT 1 FROM bundles WHERE name = $1 AND is_dev"
 
 
 def _until(expires: float | None) -> str:
@@ -120,11 +124,16 @@ def snippet(fmt: str, url: str, key: str) -> tuple[str, str]:
             "Claude Desktop. It needs Node.js 18 or newer."
         )
         return text, how
+    # Quoted: an IPv6 host ("[::1]") is a glob pattern, and zsh refuses
+    # to run a command whose glob matches nothing.
     text = (
-        f"claude mcp add --scope user --transport http {SERVER_NAME} {url} "
-        f'--header "x-api-key: {key}"'
+        f"claude mcp add --scope user --transport http {SERVER_NAME} "
+        f'{shlex.quote(url)} --header "x-api-key: {key}"'
     )
-    how = "Paste it in a terminal, then start a new Claude Code session."
+    how = (
+        "Paste it in a terminal, then start a new Claude Code session. "
+        "The command holds your key, so it also lands in your shell history."
+    )
     return text, how
 
 
@@ -132,6 +141,10 @@ async def _settings(
     addon: BaseServerAddon, variant: str
 ) -> ApiKeyActionSettings:
     """Return the action settings for a variant.
+
+    The variant comes from the request, and a variant without overrides
+    gets the defaults, so only production, staging and existing dev
+    bundles are trusted; anything else uses the production settings.
 
     Args:
         addon: The MCP addon.
@@ -141,8 +154,30 @@ async def _settings(
         The ``api_key_action`` settings.
 
     """
+    if variant not in {"production", "staging"} and not (
+        await Postgres.fetchrow(DEV_BUNDLE_SQL, variant)
+    ):
+        variant = "production"
     settings = await addon.get_studio_settings(variant)
     return settings.api_key_action  # type: ignore[union-attr]
+
+
+def _project_allowed(
+    settings: ApiKeyActionSettings, project_name: str | None
+) -> bool:
+    """Return True if the action is offered on ``project_name``.
+
+    Args:
+        settings: The action settings.
+        project_name: The project the action runs on.
+
+    Returns:
+        Whether the project may use the action.
+
+    """
+    if not project_name:
+        return False
+    return not settings.projects or project_name in settings.projects
 
 
 async def get_actions(
@@ -162,9 +197,7 @@ async def get_actions(
 
     """
     settings = await _settings(addon, variant)
-    if not settings.enabled or not project_name:
-        return []
-    if settings.projects and project_name not in settings.projects:
+    if not settings.enabled or not _project_allowed(settings, project_name):
         return []
     return [
         SimpleActionManifest(
@@ -194,6 +227,8 @@ def _refusal(settings: ApiKeyActionSettings, executor: ActionExecutor) -> str:
     """
     if not settings.enabled:
         return "Creating MCP keys is turned off on this server."
+    if not _project_allowed(settings, executor.context.project_name):
+        return "Creating MCP keys is not offered on this project."
     user = executor.user
     if user.is_service or user.is_guest:
         return "Service and guest users cannot create an MCP key."
@@ -276,13 +311,14 @@ async def _create_key(
 
 
 def _result(
-    record: dict[str, Any], user_name: str, text: str, how: str
+    record: dict[str, Any], user_name: str, url: str, text: str, how: str
 ) -> SimpleForm:
     """Return the dialog that shows the new key.
 
     Args:
         record: The stored key record.
         user_name: The user the key is for.
+        url: MCP endpoint URL the configuration points at.
         text: The configuration to copy, with the key in it.
         how: What to do with it.
 
@@ -295,6 +331,12 @@ def _result(
         f"Key **{record['label']}** created for {user_name}, valid until "
         f"{_until(record['expires'])}. It is shown only now: copy it "
         "before you close this dialog."
+    )
+    # The URL comes from the browser's Referer, and AYON falls back to
+    # localhost when there is none, so say where the client will connect.
+    form.label(
+        f"It connects to {url}. If you reach AYON at another address, "
+        "change the URL after pasting."
     )
     form.label(how)
     form.text(RESULT_FIELD, value=text, multiline=True)
@@ -357,7 +399,7 @@ async def execute(
     # extra_clipboard on a form answer today; kept for when it does not.
     return await executor.get_form_response(
         title="Your MCP key",
-        fields=_result(record, user.name, text, how),
+        fields=_result(record, user.name, url, text, how),
         submit_label=None,
         cancel_label="Close",
         extra_clipboard=text,

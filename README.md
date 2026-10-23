@@ -108,9 +108,17 @@ Addon settings (Studio settings > MCP > API key action):
 | Setting | Default | Meaning |
 | --- | --- | --- |
 | Enabled | on | Show the action at all |
-| Projects | empty | Projects whose overview shows the action. Empty: every project |
-| Allowed email domains | empty | Only users with an email in these domains get a key. Empty: every user. Guests and service users never do |
-| Key lifetime in days | 365 | 0: the key never expires |
+| Projects | empty | Projects where the action is offered. Empty: every project |
+| Allowed email domains | empty | Only users with an email in these domains may use the action. Empty: every user. Guests and service users never may |
+| Key lifetime in days | 365 | Lifetime of keys the action creates. 0: the key never expires |
+
+The settings come from the production variant, or from staging or a dev
+bundle when the action runs there; any other variant falls back to
+production.
+
+These settings shape the action, they are not an access control: users
+can edit their own email, and AYON lets every user create their own API
+keys, with any expiry, through `POST /api/users/{name}/apikeys`.
 
 ## VSCode (and derivates)
 You can manually configure MCP servers by editing the `mcp.json` file. There are two locations for this file:

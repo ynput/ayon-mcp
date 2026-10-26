@@ -1,5 +1,5 @@
 """Server addon definition."""
-from typing import Type
+from typing import TYPE_CHECKING, Type
 
 from ayon_server.addons import BaseServerAddon
 from ayon_server.api.auth import user_from_request
@@ -8,6 +8,7 @@ from ayon_server.exceptions import AyonException
 from ayon_server.settings import BaseSettingsModel
 from fastapi import APIRouter, Request, Response, WebSocket
 
+from . import api_keys
 from .mcp_tunnel import (
     CLOSE_FORBIDDEN,
     CLOSE_UNAUTHORIZED,
@@ -18,6 +19,13 @@ from .mcp_tunnel import (
 )
 from .mcp_tunnel.redis_bus import RedisTunnelBus
 from .settings import DEFAULT_VALUES, MCPSettings
+
+if TYPE_CHECKING:
+    from ayon_server.actions import (
+        ActionExecutor,
+        ExecuteResponseModel,
+        SimpleActionManifest,
+    )
 
 
 async def _authenticate_service(websocket: WebSocket) -> str:
@@ -99,3 +107,36 @@ class MCPAddon(BaseServerAddon):
             msg = "Settings model class is not defined."
             raise RuntimeError(msg)
         return settings_model_cls(**DEFAULT_VALUES)
+
+    async def get_simple_actions(
+        self,
+        project_name: str | None = None,
+        variant: str = "production",
+    ) -> "list[SimpleActionManifest]":
+        """Return the addon's actions for a project.
+
+        Args:
+            project_name: The project whose actions are listed.
+            variant: Bundle variant.
+
+        Returns:
+            The "Create my MCP key" action where it is enabled.
+
+        """
+        return await api_keys.get_actions(self, project_name, variant)
+
+    async def execute_action(
+        self, executor: "ActionExecutor"
+    ) -> "ExecuteResponseModel":
+        """Run one of the addon's actions.
+
+        Args:
+            executor: The action executor.
+
+        Returns:
+            The action's response.
+
+        """
+        if executor.identifier == api_keys.ACTION_ID:
+            return await api_keys.execute(self, executor)
+        return await super().execute_action(executor)

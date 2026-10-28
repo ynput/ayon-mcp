@@ -27,6 +27,8 @@ class AddonToolError(RuntimeError):
 def _resolve_path(tool: AddonTool, arguments: dict[str, Any]) -> str:
     """Fill ``{param}`` placeholders, consuming those arguments.
 
+    A ``None`` argument counts as missing rather than becoming ``"None"``.
+
     Returns:
         The resolved request path, still under the addon prefix.
 
@@ -39,8 +41,9 @@ def _resolve_path(tool: AddonTool, arguments: dict[str, Any]) -> str:
     for key, value in list(arguments.items()):
         placeholder = f"{{{key}}}"
         if placeholder in path:
-            path = path.replace(placeholder, quote(str(value), safe=""))
             del arguments[key]
+            if value is not None:
+                path = path.replace(placeholder, quote(str(value), safe=""))
 
     unresolved = _PLACEHOLDER.findall(path)
     if unresolved:
@@ -62,8 +65,8 @@ async def call_addon_tool(
     """Call an addon tool's endpoint with the caller's credentials.
 
     Path placeholders are filled from ``arguments``; the remaining
-    arguments go to the query string for GET and to the JSON body
-    otherwise.
+    arguments go to the query string for GET (``None`` values dropped,
+    as AYON rejects an empty ``?limit=``) and to the JSON body otherwise.
 
     Args:
         tool: The discovered addon tool.
@@ -88,8 +91,10 @@ async def call_addon_tool(
     client = client or get_global_rest_client()
     try:
         if method == "GET":
+            # Same as the generated REST tools' query parameters.
+            params = {k: v for k, v in arguments.items() if v is not None}
             return await client.request(
-                method=method, path=path, params=arguments or None
+                method=method, path=path, params=params or None
             )
         # An empty object, not None: a body model with only optional
         # fields still requires a body, otherwise the endpoint returns 422.

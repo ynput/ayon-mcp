@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import contextvars
 import json
 import logging
@@ -24,7 +25,7 @@ logger = logging.getLogger(__name__)
 
 SUPPORTED_HTTP_METHODS = frozenset({"GET", "POST", "PUT", "PATCH", "DELETE"})
 # MCP tool names: ^[a-zA-Z0-9_-]{1,64}$ (applies to the namespaced name).
-_TOOL_NAME_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
+_TOOL_NAME_RE = re.compile(r"[A-Za-z0-9_-]{1,64}")
 _MAX_DECODE_ROUNDS = 3
 # call_ayon_tool consumes these before the call reaches the addon.
 RESERVED_PARAMETER_NAMES = frozenset({"confirm_mutation"})
@@ -354,7 +355,7 @@ def _parse_tool(
         return None
     name = tool_def.get("name")
     full_name = f"{namespace}_{name}"
-    if not isinstance(name, str) or not _TOOL_NAME_RE.match(full_name):
+    if not isinstance(name, str) or not _TOOL_NAME_RE.fullmatch(full_name):
         logger.warning(
             "Skipping addon %s tool %r: invalid tool name", addon_name, name
         )
@@ -630,30 +631,37 @@ async def _discover_targets(
 def _merge_addon_tools(per_addon: list[list[AddonTool]]) -> list[AddonTool]:
     """Flatten per-addon tools, keeping the first of duplicate names.
 
+    Two addons can only collide through a custom ``namespace``; the
+    warning names both sides so an admin can find the misconfiguration.
+
     Returns:
         All tools in addon order.
 
     """
     all_tools: list[AddonTool] = []
-    seen_names: set[str] = set()
-    discovered_addons: set[str] = set()
+    owners: dict[str, AddonTool] = {}
     for tools in per_addon:
         for tool in tools:
-            if tool.full_name in seen_names:
+            winner = owners.get(tool.full_name)
+            if winner is not None:
                 logger.warning(
-                    "Skipping addon tool %s from %s: name already taken",
+                    "Addon tool %s from %s/%s conflicts with %s/%s, "
+                    "keeping %s",
                     tool.full_name,
                     tool.addon_name,
+                    tool.addon_version,
+                    winner.addon_name,
+                    winner.addon_version,
+                    winner.addon_name,
                 )
                 continue
-            seen_names.add(tool.full_name)
+            owners[tool.full_name] = tool
             all_tools.append(tool)
-            discovered_addons.add(tool.addon_name)
 
     logger.info(
         "Total: discovered %d addon tools from %d addons",
         len(all_tools),
-        len(discovered_addons),
+        len({tool.addon_name for tool in all_tools}),
     )
 
     return all_tools
@@ -674,6 +682,10 @@ class AddonCatalog:
     changed, bumping ``generation`` so providers rebuild their catalog.
     Discovery always runs with the service API key, never as the user
     whose request triggered the check.
+
+    Loads run as a background task: a periodic check never holds up the
+    request that triggered it, which keeps the current tools meanwhile.
+    Only the first load and a forced check wait for the result.
     """
 
     def __init__(
@@ -684,7 +696,7 @@ class AddonCatalog:
         refresh_interval: float = 60.0,
         timeout: float = 10.0,
     ) -> None:
-        """Initialize an empty catalog; call ``load_sync`` at startup.
+        """Initialize an empty catalog; the first read loads it.
 
         Args:
             base_url: AYON server URL.
@@ -708,64 +720,66 @@ class AddonCatalog:
         self._failed_targets: set[tuple[str, str]] = set()
         self._checked_at = float("-inf")
         self._forced_at = float("-inf")
-        # Set when load_sync ran inside an event loop and could not load.
-        self._initial_load_pending = False
-        self._lock: asyncio.Lock | None = None
+        # False until the first load finished, so the first read waits.
+        self._loaded = False
+        self._load_task: asyncio.Task[None] | None = None
 
-    def load_sync(self) -> None:
-        """Run the first discovery from synchronous startup code.
+    def start(self) -> None:
+        """Start the first discovery in the background.
 
-        Failures are logged and leave the catalog empty: discovery must
-        never prevent the MCP server from starting. Inside a running event
-        loop ``asyncio.run`` cannot be used, so the first discovery is
-        deferred to the first ``refresh``.
+        Called from the server lifespan so the first catalog read usually
+        finds the tools ready, without delaying server start.
         """
-        try:
-            asyncio.get_running_loop()
-        except RuntimeError:
-            pass
-        else:
-            logger.info(
-                "Event loop already running, addon MCP tool discovery "
-                "deferred to the first catalog read"
-            )
-            self._initial_load_pending = True
-            return
-        self._checked_at = time.monotonic()
-        asyncio.run(self._load_logged())
+        if self._load_task is None:
+            self._start_load(time.monotonic())
+
+    async def close(self) -> None:
+        """Cancel a load still running at server shutdown."""
+        task = self._load_task
+        if task is not None and not task.done():
+            task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await task
 
     async def refresh(self, *, force: bool = False) -> None:
         """Re-discover addon tools if the bundle check is due.
+
+        A due periodic check runs in the background and returns at once.
+        The first load and a forced check are awaited, so the caller sees
+        their result; a load already in flight is joined, not repeated.
 
         Args:
             force: Check now (rate limited by ``FORCED_REFRESH_INTERVAL``)
                 instead of waiting for ``refresh_interval``.
 
         """
-        started = time.monotonic()
-        if force:
-            if started - self._forced_at < FORCED_REFRESH_INTERVAL:
-                return
-        elif not self._initial_load_pending and (
-            self._refresh_interval <= 0
-            or started - self._checked_at < self._refresh_interval
-        ):
-            return
-
-        if self._lock is None:
-            self._lock = asyncio.Lock()
-        async with self._lock:
-            if self._checked_at >= started:
-                # A concurrent call refreshed while this one waited.
-                return
+        now = time.monotonic()
+        running = self._load_task is not None and not self._load_task.done()
+        if not running and self._is_due(now, force=force):
             if force:
-                self._forced_at = started
-            self._initial_load_pending = False
-            self._checked_at = time.monotonic()
-            # An empty context drops the caller's x-as-user identity.
-            await asyncio.create_task(
-                self._load_logged(), context=contextvars.Context()
-            )
+                self._forced_at = now
+            self._start_load(now)
+            running = True
+        if running and (force or not self._loaded):
+            # Shielded: a disconnecting client must not cancel the load.
+            await asyncio.shield(self._load_task)
+
+    def _is_due(self, now: float, *, force: bool) -> bool:
+        if not self._loaded and self._load_task is None:
+            return True
+        if force:
+            return now - self._forced_at >= FORCED_REFRESH_INTERVAL
+        return (
+            self._refresh_interval > 0
+            and now - self._checked_at >= self._refresh_interval
+        )
+
+    def _start_load(self, now: float) -> None:
+        self._checked_at = now
+        # An empty context drops the caller's x-as-user identity.
+        self._load_task = asyncio.create_task(
+            self._load_logged(), context=contextvars.Context()
+        )
 
     async def _load(self) -> None:
         client = RestApiClient(self._base_url)
@@ -827,3 +841,5 @@ class AddonCatalog:
         except Exception:
             # Discovery must never break the MCP server.
             logger.exception("Addon MCP tool discovery crashed")
+        finally:
+            self._loaded = True

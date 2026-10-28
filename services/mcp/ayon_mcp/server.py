@@ -237,6 +237,8 @@ def create_mcp_server(base_url: str, api_key: str) -> FastMCP:
         FastMCP instance configured with the AYON OpenAPI spec.
 
     """
+    # Set below in discovery mode; the lifespan starts its first load.
+    addon_catalog: AddonCatalog | None = None
 
     @lifespan
     async def server_lifespan(_server: FastMCP) -> AsyncIterator[dict]:
@@ -254,10 +256,15 @@ def create_mcp_server(base_url: str, api_key: str) -> FastMCP:
         )
         try:
             set_global_rest_client(client)
+            if addon_catalog is not None:
+                # In the background: a slow AYON must not delay start.
+                addon_catalog.start()
             # Pass to lifespan context
             yield {"api_client": client}
         finally:
             # Cleanup on shutdown
+            if addon_catalog is not None:
+                await addon_catalog.close()
             await client.close()
             set_global_rest_client(None)
 
@@ -311,7 +318,6 @@ def create_mcp_server(base_url: str, api_key: str) -> FastMCP:
                 "direct only exposes curated tools."
             )
     else:
-        addon_catalog = None
         if addon_tools_enabled():
             addon_catalog = AddonCatalog(
                 base_url,
@@ -319,7 +325,6 @@ def create_mcp_server(base_url: str, api_key: str) -> FastMCP:
                 variant=addon_tools_variant(),
                 refresh_interval=addon_tools_refresh_interval(),
             )
-            addon_catalog.load_sync()
         register_tools(
             mcp, create_discovery_tools(tools, addon_catalog=addon_catalog)
         )

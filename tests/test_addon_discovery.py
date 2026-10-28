@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from types import SimpleNamespace
 from typing import Any
 
 import httpx
@@ -567,7 +568,7 @@ async def test_broken_addon_does_not_drop_other_addons():
 
 
 @pytest.mark.asyncio
-async def test_duplicate_tool_names_across_addons_keep_first():
+async def test_duplicate_tool_names_across_addons_keep_first(caplog):
     shared = {
         "namespace": "shared",
         "tools": [
@@ -597,9 +598,14 @@ async def test_duplicate_tool_names_across_addons_keep_first():
         }
     )
 
-    tools = await discover_addon_tools(client, api_key="key")
+    with caplog.at_level("WARNING", logger="ayon_mcp.addon_discovery"):
+        tools = await discover_addon_tools(client, api_key="key")
 
     assert [(t.full_name, t.addon_name) for t in tools] == [("shared_ping", "alpha")]
+    assert (
+        "shared_ping from beta/2 conflicts with alpha/1, keeping alpha"
+        in caplog.text
+    )
 
 
 def test_addon_tool_cannot_shadow_curated_tool():
@@ -618,6 +624,17 @@ def test_addon_tool_cannot_shadow_curated_tool():
     )
 
     assert [t.name for t in ayon_tools] == ["get_other"]
+
+
+def test_tool_name_with_trailing_newline_is_rejected():
+    spec = {
+        "namespace": "x",
+        "tools": [
+            {"name": "ok\n", "endpoint": {"path": "/api/addons/x/{version}/a"}},
+        ],
+    }
+
+    assert parse_addon_tools(spec, "x", "1") == []
 
 
 @pytest.mark.asyncio
@@ -714,6 +731,39 @@ async def test_post_without_body_arguments_sends_empty_object():
 
     # All arguments went to the path; the body model still needs an object.
     assert client.calls[0]["json"] == {}
+
+
+@pytest.mark.asyncio
+async def test_get_tool_drops_none_arguments():
+    tool = AddonTool(
+        name="items",
+        description="",
+        parameters={},
+        endpoint=AddonToolEndpoint(method="GET", path="/api/addons/x/1/items"),
+        addon_name="x",
+        addon_version="1",
+        namespace="x",
+    )
+    client = FakeRestClient({("GET", "/api/addons/x/1/items"): []})
+
+    await call_addon_tool(tool, {"limit": None, "name": "a"}, client)
+    await call_addon_tool(tool, {"limit": None}, client)
+
+    # AYON rejects an empty "?limit=".
+    assert client.calls[0]["params"] == {"name": "a"}
+    assert client.calls[1]["params"] is None
+
+
+@pytest.mark.asyncio
+async def test_none_path_argument_counts_as_missing():
+    addon_tools = parse_addon_tools(REPORTS_SPEC, "reports", "1.2.0")
+    client = FakeRestClient({})
+
+    with pytest.raises(AddonToolError, match="dashboard_id"):
+        await call_addon_tool(
+            addon_tools[2], {"dashboard_id": None, "preview_token": "t"}, client
+        )
+    assert client.calls == []
 
 
 @pytest.mark.asyncio
@@ -858,7 +908,7 @@ def _catalog(monkeypatch, routes: dict, refresh_interval: float = 0):
     catalog = AddonCatalog(
         "http://ayon", "service-key", refresh_interval=refresh_interval
     )
-    catalog.load_sync()
+    asyncio.run(catalog.refresh())
     return catalog, client
 
 
@@ -866,18 +916,43 @@ def test_catalog_follows_bundle_change(monkeypatch):
     routes = _bundle_routes("1.0.0", ["old_tool"])
     catalog, _ = _catalog(monkeypatch, routes, refresh_interval=1e-9)
     provider = AyonDynamicToolProvider([], addon_catalog=catalog)
-
     routes.update(_bundle_routes("1.1.0", ["old_tool", "new_tool"]))
-    tools = asyncio.run(provider.get_all_tools())
 
-    assert [t.name for t in tools] == [
+    async def run() -> tuple[list, list]:
+        # The due check runs in the background; this call is not held up.
+        before = await provider.get_all_tools()
+        await catalog._load_task
+        return before, await provider.get_all_tools()
+
+    before, after = asyncio.run(run())
+
+    assert [t.name for t in before] == ["reports_old_tool"]
+    assert [t.name for t in after] == [
         "reports_old_tool",
         "reports_new_tool",
     ]
     assert catalog.tools[0].addon_version == "1.1.0"
 
 
-def test_load_sync_in_running_loop_defers_discovery(monkeypatch):
+def test_catalog_construction_does_not_query_server(monkeypatch):
+    client = FakeRestClient(_bundle_routes("1.0.0", ["old_tool"]))
+    monkeypatch.setattr(
+        addon_discovery, "RestApiClient", lambda base_url: client
+    )
+    catalog = AddonCatalog("http://ayon", "service-key", refresh_interval=0)
+    assert client.calls == []
+
+    async def read():
+        provider = AyonDynamicToolProvider([], addon_catalog=catalog)
+        # The first read waits for the first load.
+        return await provider.get_all_tools()
+
+    tools = asyncio.run(read())
+
+    assert [t.name for t in tools] == ["reports_old_tool"]
+
+
+def test_first_read_joins_load_started_in_background(monkeypatch):
     client = FakeRestClient(_bundle_routes("1.0.0", ["old_tool"]))
     monkeypatch.setattr(
         addon_discovery, "RestApiClient", lambda base_url: client
@@ -885,14 +960,32 @@ def test_load_sync_in_running_loop_defers_discovery(monkeypatch):
     catalog = AddonCatalog("http://ayon", "service-key", refresh_interval=0)
 
     async def start_and_read():
-        catalog.load_sync()
-        assert client.calls == []
+        catalog.start()
         provider = AyonDynamicToolProvider([], addon_catalog=catalog)
-        return await provider.get_all_tools()
+        tools = await provider.get_all_tools()
+        await catalog.close()
+        return tools
 
     tools = asyncio.run(start_and_read())
 
     assert [t.name for t in tools] == ["reports_old_tool"]
+    # Joined, not repeated.
+    assert [c["path"] for c in client.calls].count("/api/addons") == 1
+
+
+def test_forced_refresh_runs_within_the_same_clock_tick(monkeypatch):
+    # Windows' monotonic clock ticks every ~15.6 ms, so a load and a
+    # forced check can share a timestamp.
+    monkeypatch.setattr(
+        addon_discovery, "time", SimpleNamespace(monotonic=lambda: 100.0)
+    )
+    routes = _bundle_routes("1.0.0", ["old_tool"])
+    catalog, client = _catalog(monkeypatch, routes)
+    client.calls.clear()
+
+    asyncio.run(catalog.refresh(force=True))
+
+    assert [c["path"] for c in client.calls] == ["/api/addons"]
 
 
 def test_unknown_tool_forces_catalog_refresh(monkeypatch):
@@ -913,6 +1006,32 @@ def test_unknown_tool_forces_catalog_refresh(monkeypatch):
 
     assert schema["function"]["name"] == "reports_new_tool"
     assert missing["success"] is False
+
+
+def test_alias_and_hidden_tool_names_do_not_force_refresh(monkeypatch):
+    monkeypatch.setenv("AYON_MCP_READ_ONLY", "true")
+    routes = _bundle_routes("1.0.0", ["old_tool"])
+    routes[("GET", "/api/addons/reports/1.0.0/mcp/tools")]["tools"].append(
+        {
+            "name": "drop",
+            "endpoint": {
+                "method": "DELETE",
+                "path": "/api/addons/reports/{version}/drop",
+            },
+        }
+    )
+    catalog, client = _catalog(monkeypatch, routes)
+    provider = AyonDynamicToolProvider([], addon_catalog=catalog)
+    client.calls.clear()
+
+    async def run() -> None:
+        await provider.get_tool_schema("ayon.addon.reports.reports_old_tool")
+        # Hidden in read-only mode: known, a re-check cannot change it.
+        await provider.get_tool_schema("reports_drop")
+
+    asyncio.run(run())
+
+    assert client.calls == []
 
 
 def test_catalog_refetches_manifests_only_after_version_change(monkeypatch):
@@ -1001,3 +1120,18 @@ def test_catalog_keeps_retrying_while_addon_keeps_failing(monkeypatch):
     assert [c["path"] for c in client.calls] == ["/api/addons", path]
     assert catalog.tools == []
     assert catalog.generation == generation
+
+
+def test_catalog_rebuild_keeps_retry_history(monkeypatch):
+    monkeypatch.setenv("AYON_MCP_GUARDS", "strict")
+    routes = _bundle_routes("1.0.0", ["old_tool"])
+    catalog, _ = _catalog(monkeypatch, routes)
+    provider = AyonDynamicToolProvider([], addon_catalog=catalog)
+    retry_guard = provider._retry_guard
+    assert retry_guard is not None
+
+    routes.update(_bundle_routes("1.1.0", ["new_tool"]))
+    asyncio.run(provider._sync_addon_tools(force=True))
+
+    assert provider._retry_guard is retry_guard
+    assert provider._guard_chain.get("retry_safety") is retry_guard

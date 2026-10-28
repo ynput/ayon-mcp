@@ -8,7 +8,10 @@ import logging
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
-from chuk_tool_processor.discovery import BaseDynamicToolProvider
+from chuk_tool_processor.discovery import (
+    BaseDynamicToolProvider,
+    find_tool_by_alias,
+)
 from chuk_tool_processor.guards import (
     ErrorClass,
     RetrySafetyGuard,
@@ -182,6 +185,8 @@ def create_addon_ayon_tools(
     Addon tools carry the side effect their addon declared, so the same
     confirmation policy and guard chain apply as for curated tools. In
     ``AYON_MCP_READ_ONLY`` mode only read-only addon tools are kept.
+    Name conflicts between addons are resolved by the ``AddonCatalog``
+    already; here an addon only loses against a built-in tool.
 
     Args:
         addon_tools: List of discovered addon tools.
@@ -196,19 +201,20 @@ def create_addon_ayon_tools(
 
     """
     read_only = read_only_enabled()
+    reserved = set(reserved_names)
     tools: list[AyonTool] = []
-    taken = set(reserved_names)
     for tool in addon_tools:
-        if tool.full_name in taken:
+        if tool.full_name in reserved:
             logger.warning(
-                "Skipping addon tool %s from %s: name already taken",
+                "Addon tool %s from %s/%s conflicts with a built-in tool, "
+                "keeping the built-in tool",
                 tool.full_name,
                 tool.addon_name,
+                tool.addon_version,
             )
             continue
         if read_only and tool.side_effect is not SideEffectClass.READ_ONLY:
             continue
-        taken.add(tool.full_name)
         tools.append(
             AyonTool(
                 name=tool.full_name,
@@ -290,9 +296,14 @@ class AyonDynamicToolProvider(BaseDynamicToolProvider[AyonTool]):
         ]
 
     def _set_tools(self, tools: list[AyonTool]) -> None:
-        """Replace the catalog and rebuild everything derived from it."""
+        """Replace the catalog and rebuild everything derived from it.
+
+        The retry guard is stateful and not tied to the tool list, so a
+        rebuilt chain keeps the previous one and its retry history.
+        """
         self._tools = tools
         self._tools_by_name = {tool.name: tool for tool in tools}
+        previous_retry_guard = getattr(self, "_retry_guard", None)
         self._guard_chain = (
             build_guard_chain(tools)
             if self._explicit_guard_chain is _DEFAULT
@@ -303,10 +314,33 @@ class AyonDynamicToolProvider(BaseDynamicToolProvider[AyonTool]):
             if self._guard_chain is not None
             else None
         )
+        if (
+            isinstance(retry_guard, RetrySafetyGuard)
+            and previous_retry_guard is not None
+            and retry_guard is not previous_retry_guard
+        ):
+            self._guard_chain.remove("retry_safety")
+            self._guard_chain.add("retry_safety", previous_retry_guard)
+            retry_guard = previous_retry_guard
         self._retry_guard = (
             retry_guard if isinstance(retry_guard, RetrySafetyGuard) else None
         )
         self.invalidate_cache()
+
+    def _is_unknown(self, tool_name: str) -> bool:
+        """Return True if ``tool_name`` may exist on the server only.
+
+        Exact names, aliases (``ayon.entities.get_folders``) and addon
+        tools hidden here (read-only mode, name conflict) are known, so
+        they never force a re-check whose result cannot change.
+        """
+        if tool_name in self._tools_by_name:
+            return False
+        if find_tool_by_alias(tool_name, self._tools) is not None:
+            return False
+        return self._addon_catalog is None or all(
+            tool.full_name != tool_name for tool in self._addon_catalog.tools
+        )
 
     async def _sync_addon_tools(self, *, force: bool = False) -> None:
         """Pick up addon tools changed by a bundle update.
@@ -346,7 +380,7 @@ class AyonDynamicToolProvider(BaseDynamicToolProvider[AyonTool]):
             An OpenAI-style function schema with confirmation metadata.
 
         """
-        if tool_name not in self._tools_by_name:
+        if self._is_unknown(tool_name):
             await self._sync_addon_tools(force=True)
         schema = await super().get_tool_schema(tool_name)
         tool = self._tools_by_name.get(
@@ -446,10 +480,9 @@ class AyonDynamicToolProvider(BaseDynamicToolProvider[AyonTool]):
             A structured success result or an execution/policy error.
 
         """
-        tool = self._tools_by_name.get(tool_name)
-        if tool is None:
+        if self._is_unknown(tool_name):
             await self._sync_addon_tools(force=True)
-            tool = self._tools_by_name.get(tool_name)
+        tool = self._tools_by_name.get(tool_name)
         if tool is None:
             return {
                 "success": False,

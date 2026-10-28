@@ -237,9 +237,6 @@ def create_mcp_server(base_url: str, api_key: str) -> FastMCP:
         FastMCP instance configured with the AYON OpenAPI spec.
 
     """
-    # Set below in discovery mode; the lifespan starts its first load.
-    addon_catalog: AddonCatalog | None = None
-
     @lifespan
     async def server_lifespan(_server: FastMCP) -> AsyncIterator[dict]:
         """FastMCP Lifespan manager to manage client state cleanly.
@@ -309,27 +306,45 @@ def create_mcp_server(base_url: str, api_key: str) -> FastMCP:
         instructions=instructions
     )
 
+    # The lifespan above starts its first load.
+    addon_catalog = _create_addon_catalog(
+        base_url, api_key, tools_module.tool_exposure_mode()
+    )
     if tools_module.tool_exposure_mode() == "direct":
         register_tools(mcp, tools)
-        if addon_tools_enabled():
-            # Direct mode cannot expose addon tools, so skip the requests.
-            logger.info(
-                "Addon MCP tool discovery skipped: AYON_MCP_TOOL_EXPOSURE="
-                "direct only exposes curated tools."
-            )
     else:
-        if addon_tools_enabled():
-            addon_catalog = AddonCatalog(
-                base_url,
-                api_key,
-                variant=addon_tools_variant(),
-                refresh_interval=addon_tools_refresh_interval(),
-            )
         register_tools(
             mcp, create_discovery_tools(tools, addon_catalog=addon_catalog)
         )
 
     return mcp
+
+
+def _create_addon_catalog(
+    base_url: str, api_key: str, exposure_mode: str
+) -> AddonCatalog | None:
+    """Return the addon MCP tool catalog, or None when discovery is off.
+
+    Returns:
+        The catalog, not loaded yet; None when addon tools are disabled
+        or cannot be exposed (direct exposure mode).
+
+    """
+    if not addon_tools_enabled():
+        return None
+    if exposure_mode == "direct":
+        # Direct mode cannot expose addon tools, so skip the requests.
+        logger.info(
+            "Addon MCP tool discovery skipped: AYON_MCP_TOOL_EXPOSURE="
+            "direct only exposes curated tools."
+        )
+        return None
+    return AddonCatalog(
+        base_url,
+        api_key,
+        variant=addon_tools_variant(),
+        refresh_interval=addon_tools_refresh_interval(),
+    )
 
 
 def addon_tools_enabled() -> bool:

@@ -746,23 +746,29 @@ class AddonCatalog:
 
         A due periodic check runs in the background and returns at once.
         The first load and a forced check are awaited, so the caller sees
-        their result; a load already in flight is joined, not repeated.
+        their result. A forced check first joins a load already in flight,
+        then runs its own unless rate limited.
 
         Args:
             force: Check now (rate limited by ``FORCED_REFRESH_INTERVAL``)
                 instead of waiting for ``refresh_interval``.
 
         """
+        if self._is_running() and (force or not self._loaded):
+            # A load started before this call may predate the change a
+            # forced check looks for, so it is joined, then re-checked.
+            # Shielded: a disconnecting client must not cancel the load.
+            await asyncio.shield(self._load_task)
         now = time.monotonic()
-        running = self._load_task is not None and not self._load_task.done()
-        if not running and self._is_due(now, force=force):
+        if not self._is_running() and self._is_due(now, force=force):
             if force:
                 self._forced_at = now
             self._start_load(now)
-            running = True
-        if running and (force or not self._loaded):
-            # Shielded: a disconnecting client must not cancel the load.
+        if self._is_running() and (force or not self._loaded):
             await asyncio.shield(self._load_task)
+
+    def _is_running(self) -> bool:
+        return self._load_task is not None and not self._load_task.done()
 
     def _is_due(self, now: float, *, force: bool) -> bool:
         if not self._loaded and self._load_task is None:

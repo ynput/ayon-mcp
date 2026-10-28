@@ -1135,3 +1135,71 @@ def test_catalog_rebuild_keeps_retry_history(monkeypatch):
 
     assert provider._retry_guard is retry_guard
     assert provider._guard_chain.get("retry_safety") is retry_guard
+
+
+def test_forced_refresh_does_not_stop_at_a_stale_running_load(monkeypatch):
+    routes = _bundle_routes("1.0.0", ["old_tool"])
+    gate = asyncio.Event()
+    gated = {"on": False}
+
+    class GatedClient(FakeRestClient):
+        async def request(self, method, path, **kwargs):
+            result = await super().request(method, path, **kwargs)
+            if gated["on"] and path == "/api/addons":
+                await gate.wait()
+            return result
+
+    client = GatedClient(routes)
+    monkeypatch.setattr(
+        addon_discovery, "RestApiClient", lambda base_url: client
+    )
+    catalog = AddonCatalog(
+        "http://ayon", "service-key", refresh_interval=1e-9
+    )
+    asyncio.run(catalog.refresh())
+
+    async def run() -> None:
+        gated["on"] = True
+        calls = len(client.calls)
+        # A periodic load reads the addon list, then the bundle changes.
+        await catalog.refresh()
+        while len(client.calls) == calls:
+            await asyncio.sleep(0)
+        routes.update(_bundle_routes("1.1.0", ["new_tool"]))
+
+        forced = asyncio.create_task(catalog.refresh(force=True))
+        await asyncio.sleep(0)
+        gate.set()
+        await forced
+
+    asyncio.run(run())
+
+    # The forced check ran its own load after joining the stale one.
+    assert [t.full_name for t in catalog.tools] == ["reports_new_tool"]
+
+
+def test_known_tool_schema_follows_bundle_change(monkeypatch):
+    path = "/api/addons/reports/{version}/mcp/tools"
+    routes = _bundle_routes("1.0.0", ["tool"])
+    routes[("GET", path.format(version="1.0.0"))]["tools"][0][
+        "description"
+    ] = "Old description."
+    catalog, _ = _catalog(monkeypatch, routes, refresh_interval=1e-9)
+    provider = AyonDynamicToolProvider([], addon_catalog=catalog)
+
+    async def run() -> tuple[dict, dict]:
+        before = await provider.get_tool_schema("reports_tool")
+        routes.update(_bundle_routes("1.1.0", ["tool"]))
+        routes[("GET", path.format(version="1.1.0"))]["tools"][0][
+            "description"
+        ] = "New description."
+        # A known name is not held up; the check runs in the background.
+        await provider.get_tool_schema("reports_tool")
+        await catalog._load_task
+        return before, await provider.get_tool_schema("reports_tool")
+
+    before, after = asyncio.run(run())
+
+    assert before["function"]["description"] == "Old description."
+    # The cached schema was dropped when the addon tools changed.
+    assert after["function"]["description"] == "New description."

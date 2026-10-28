@@ -380,8 +380,9 @@ class AyonDynamicToolProvider(BaseDynamicToolProvider[AyonTool]):
             An OpenAI-style function schema with confirmation metadata.
 
         """
-        if self._is_unknown(tool_name):
-            await self._sync_addon_tools(force=True)
+        # Before the base class answers from its schema cache, which
+        # _set_tools clears when the addon tools changed.
+        await self._sync_addon_tools(force=self._is_unknown(tool_name))
         schema = await super().get_tool_schema(tool_name)
         tool = self._tools_by_name.get(
             schema.get("function", {}).get("name", tool_name)

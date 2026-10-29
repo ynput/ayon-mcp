@@ -9,12 +9,14 @@ import os
 from collections import OrderedDict
 from typing import TYPE_CHECKING, AsyncIterator
 
+import httpx
 from fastmcp import FastMCP
 from fastmcp.server.dependencies import get_http_headers
 from fastmcp.server.lifespan import lifespan
 from fastmcp.server.middleware import CallNext, Middleware, MiddlewareContext
 
 # from fastmcp.server.providers.openapi import MCPType, RouteMap
+from .addon_discovery import AddonCatalog
 from .client import get_ayon_api, set_global_ayon_client
 from .guardrails import read_only_enabled
 from .instructions import (
@@ -235,7 +237,6 @@ def create_mcp_server(base_url: str, api_key: str) -> FastMCP:
         FastMCP instance configured with the AYON OpenAPI spec.
 
     """
-
     @lifespan
     async def server_lifespan(_server: FastMCP) -> AsyncIterator[dict]:
         """FastMCP Lifespan manager to manage client state cleanly.
@@ -252,10 +253,15 @@ def create_mcp_server(base_url: str, api_key: str) -> FastMCP:
         )
         try:
             set_global_rest_client(client)
+            if addon_catalog is not None:
+                # In the background: a slow AYON must not delay start.
+                addon_catalog.start()
             # Pass to lifespan context
             yield {"api_client": client}
         finally:
             # Cleanup on shutdown
+            if addon_catalog is not None:
+                await addon_catalog.close()
             await client.close()
             set_global_rest_client(None)
 
@@ -269,9 +275,10 @@ def create_mcp_server(base_url: str, api_key: str) -> FastMCP:
             )
             if changed:
                 importlib.reload(tools_module)
-        except (OSError, TypeError, ValueError) as exc:
+        # AYON down or slow: keep the generated tools, never fail start
+        except (httpx.HTTPError, OSError, TypeError, ValueError) as exc:
             logger.warning(
-                "OpenAPI tool sync failed for %s/openapi.json: %s",
+                "OpenAPI tool sync failed for %s/openapi.json: %r",
                 base_url.rstrip("/"),
                 exc,
             )
@@ -299,12 +306,80 @@ def create_mcp_server(base_url: str, api_key: str) -> FastMCP:
         instructions=instructions
     )
 
+    # The lifespan above starts its first load.
+    addon_catalog = _create_addon_catalog(
+        base_url, api_key, tools_module.tool_exposure_mode()
+    )
     if tools_module.tool_exposure_mode() == "direct":
         register_tools(mcp, tools)
     else:
-        register_tools(mcp, create_discovery_tools(tools))
+        register_tools(
+            mcp, create_discovery_tools(tools, addon_catalog=addon_catalog)
+        )
 
     return mcp
+
+
+def _create_addon_catalog(
+    base_url: str, api_key: str, exposure_mode: str
+) -> AddonCatalog | None:
+    """Return the addon MCP tool catalog, or None when discovery is off.
+
+    Returns:
+        The catalog, not loaded yet; None when addon tools are disabled
+        or cannot be exposed (direct exposure mode).
+
+    """
+    if not addon_tools_enabled():
+        return None
+    if exposure_mode == "direct":
+        # Direct mode cannot expose addon tools, so skip the requests.
+        logger.info(
+            "Addon MCP tool discovery skipped: AYON_MCP_TOOL_EXPOSURE="
+            "direct only exposes curated tools."
+        )
+        return None
+    return AddonCatalog(
+        base_url,
+        api_key,
+        variant=addon_tools_variant(),
+        refresh_interval=addon_tools_refresh_interval(),
+    )
+
+
+def addon_tools_enabled() -> bool:
+    """Return True if addon MCP tool discovery should run at startup."""
+    value = (os.getenv("AYON_MCP_ENABLE_ADDON_TOOLS", "true") or "").strip()
+    return value.lower() not in {"0", "false", "no", "off"}
+
+
+def addon_tools_variant() -> str:
+    """Return the bundle variant whose addon versions expose MCP tools.
+
+    ``AYON_MCP_ADDON_VARIANT`` wins, then ``AYON_DEFAULT_SETTINGS_VARIANT``
+    (the variant an AYON service runs on), then ``production``.
+    """
+    for name in ("AYON_MCP_ADDON_VARIANT", "AYON_DEFAULT_SETTINGS_VARIANT"):
+        value = (os.getenv(name) or "").strip()
+        if value:
+            return value
+    return "production"
+
+
+def addon_tools_refresh_interval() -> float:
+    """Return seconds between checks for changed addon versions.
+
+    ``AYON_MCP_ADDON_REFRESH_SECONDS``, default 60; ``0`` disables the
+    periodic check.
+    """
+    value = (os.getenv("AYON_MCP_ADDON_REFRESH_SECONDS") or "").strip()
+    try:
+        return max(float(value), 0.0) if value else 60.0
+    except ValueError:
+        logger.warning(
+            "Invalid AYON_MCP_ADDON_REFRESH_SECONDS %r, using 60.", value
+        )
+        return 60.0
 
 
 def create_remote_server(

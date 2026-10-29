@@ -336,6 +336,113 @@ You can still manually regenerate from the local spec file when needed:
 uv run python ./services/mcp/scripts/generate_openapi_tools.py
 ```
 
+### Addon MCP Tools
+
+Addons can ship their own MCP tools without any change in this repository.
+Right after the server starts (in the background, so a slow AYON does not
+delay it), AYON MCP:
+
+1. Fetches `GET /api/addons` to list installed addons
+2. For each addon active in the configured variant, requests
+   `GET /api/addons/{name}/{version}/mcp/tools`
+3. Skips addons that answer 404 or a JSON response without `tools`
+4. Registers every returned tool as `{namespace}_{name}` in the discovery
+   catalog (`search_ayon_tools`, `get_ayon_tool_schema`, `call_ayon_tool`)
+
+The addon endpoint returns:
+
+```json
+{
+  "namespace": "reports",
+  "tools": [
+    {
+      "name": "list_metrics",
+      "description": "List available metrics from the Reports catalog.",
+      "parameters": {
+        "type": "object",
+        "properties": {"project_name": {"type": "string"}},
+        "required": ["project_name"]
+      },
+      "endpoint": {
+        "method": "GET",
+        "path": "/api/addons/reports/{version}/metrics"
+      }
+    }
+  ]
+}
+```
+
+- `{version}` in `endpoint.path` is replaced with the addon version.
+- `{param}` placeholders matching an argument name become path parameters.
+- Remaining arguments are sent as query parameters for `GET` (arguments
+  set to `null` are left out) and as a JSON body for other methods.
+- The manifest is the addon's own side-effect policy: `sideEffect`
+  (`read_only`, `write` or `destructive`) classifies a tool, `readOnly:
+  true` is a shorthand for `read_only` (use it for `POST` query
+  endpoints). Without either, the HTTP method decides as for generated
+  REST tools: `GET` is read-only, `POST`/`PUT`/`PATCH` write and `DELETE`
+  destructive. Write and destructive tools require
+  `confirm_mutation=true`, go through the same guard chain as curated
+  tools (`AYON_MCP_GUARDS`) and are not exposed in `AYON_MCP_READ_ONLY`
+  mode.
+- Manifests are capped: at most 50 tools per addon, descriptions are cut
+  at 2000 characters and a tool whose `parameters` schema exceeds 20 kB is
+  skipped. Responses are capped by the guard chain's output size limit.
+- `endpoint.path` must start with `/api/addons/{name}/{version}/` and
+  contain no `..` segments; tools pointing elsewhere are skipped with a
+  warning. The resolved path is checked again before every call.
+- Only addon versions active in the configured variant are queried:
+  `AYON_MCP_ADDON_VARIANT`, else `AYON_DEFAULT_SETTINGS_VARIANT`, else
+  `production`. `production`/`staging` use the matching bundle; any other
+  value is treated as a dev bundle name. Addons outside that bundle are
+  skipped.
+- Addons are queried concurrently, each with its own timeout, so one slow
+  addon only loses its own tools.
+- Calls run with the caller's identity, and the addon applies its own ACL
+  to it: the caller's `x-api-key` in remote mode, the service key with
+  `x-as-user` in tunnel mode, and the configured `AYON_API_KEY` in local
+  mode (a service or admin key there means addon tools run with admin
+  rights).
+- The HTTP method is a minimum: `PUT` and `PATCH` tools can never be
+  declared read-only and `DELETE` tools are always destructive (a lower
+  manifest value is ignored with a warning), so they always need
+  `confirm_mutation` and are hidden in read-only mode. Only `POST` may be
+  declared lower than its default.
+- An addon whose `/mcp/tools` request fails (5xx, timeout, network, a
+  response that is not JSON) is retried on every refresh; an addon
+  answering 404 is not.
+- Tool names must be unique. When two addons declare the same
+  `{namespace}_{name}` (only possible with a custom `namespace`), the
+  addon listed first by `GET /api/addons` keeps it, and the warning names
+  both addons. A built-in tool always wins over an addon tool.
+
+Known limitations:
+
+- Addon tools are only exposed in discovery mode; in direct mode
+  discovery is skipped entirely.
+- `confirm_mutation` is reserved by `call_ayon_tool`; an addon tool that
+  declares a parameter with that name is skipped with a warning.
+- Discovery runs with the configured `AYON_API_KEY`, never as the calling
+  user. That key needs read access to `/api/addons` and to each addon's
+  `/mcp/tools` endpoint, otherwise the affected addon is skipped (logged
+  as a warning). A dev bundle variant also calls `GET /api/bundles`, so the
+  key needs that access too; without it only a "Bundle not found" warning
+  appears and no addon tools are discovered.
+
+Bundle changes: every replica checks which addon versions the variant
+uses at most every `AYON_MCP_ADDON_REFRESH_SECONDS` (default 60, `0`
+turns the periodic check off), on the next discovery call, and re-reads
+the manifests only when a version changed. The check runs in the
+background, so the call that triggered it is answered with the current
+tools. A tool name the replica does not know (not an alias of a known
+tool, nor an addon tool hidden in read-only mode) triggers an immediate
+check that the call waits for (at most every 10 seconds), so a tool
+listed by an already updated replica resolves on the others too.
+
+To disable discovery, set:
+
+- `AYON_MCP_ENABLE_ADDON_TOOLS=false`
+
 ## Development and tests
 
 MCP clients use ``/api/addons/mcp/{version}/mcp`` (or the server's

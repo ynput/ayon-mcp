@@ -579,7 +579,7 @@ def sync_openapi_tools_from_server(
     base_url: str,
     *,
     project_root: Path | None = None,
-    timeout: float = 10.0,
+    timeout: float = 30.0,
     api_key: str = "",
 ) -> bool:
     """Sync local spec from server and regenerate tools only when changed.

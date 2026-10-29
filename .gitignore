@@ -25,3 +25,6 @@ tests/reports/
 
 # LLM REST policy suggestion cache
 services/mcp/.rest_policy_suggestions.json
+
+# JetBrains IDE
+.idea/

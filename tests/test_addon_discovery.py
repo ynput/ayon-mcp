@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import itertools
 from types import SimpleNamespace
 from typing import Any
 
@@ -900,6 +901,19 @@ def _bundle_routes(version: str, tool_names: list[str]) -> dict:
     }
 
 
+def _ticking_clock(monkeypatch) -> None:
+    """Advance the catalog's clock on every read.
+
+    Windows' monotonic clock ticks every ~15.6 ms, so with a tiny
+    ``refresh_interval`` consecutive reads could see the same time and
+    never find the check due.
+    """
+    clock = itertools.count(1000.0)
+    monkeypatch.setattr(
+        addon_discovery, "time", SimpleNamespace(monotonic=lambda: next(clock))
+    )
+
+
 def _catalog(monkeypatch, routes: dict, refresh_interval: float = 0):
     client = FakeRestClient(routes)
     monkeypatch.setattr(
@@ -914,6 +928,7 @@ def _catalog(monkeypatch, routes: dict, refresh_interval: float = 0):
 
 def test_catalog_follows_bundle_change(monkeypatch):
     routes = _bundle_routes("1.0.0", ["old_tool"])
+    _ticking_clock(monkeypatch)
     catalog, _ = _catalog(monkeypatch, routes, refresh_interval=1e-9)
     provider = AyonDynamicToolProvider([], addon_catalog=catalog)
     routes.update(_bundle_routes("1.1.0", ["old_tool", "new_tool"]))
@@ -1150,6 +1165,7 @@ def test_forced_refresh_does_not_stop_at_a_stale_running_load(monkeypatch):
             return result
 
     client = GatedClient(routes)
+    _ticking_clock(monkeypatch)
     monkeypatch.setattr(
         addon_discovery, "RestApiClient", lambda base_url: client
     )
@@ -1184,6 +1200,7 @@ def test_known_tool_schema_follows_bundle_change(monkeypatch):
     routes[("GET", path.format(version="1.0.0"))]["tools"][0][
         "description"
     ] = "Old description."
+    _ticking_clock(monkeypatch)
     catalog, _ = _catalog(monkeypatch, routes, refresh_interval=1e-9)
     provider = AyonDynamicToolProvider([], addon_catalog=catalog)
 

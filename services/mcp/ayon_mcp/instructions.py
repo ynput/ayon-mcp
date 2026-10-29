@@ -9,6 +9,11 @@ or the `list_*` tools scoped to a project. Entity ids are hex strings;
 folder paths look like `/assets/characters/hero`. Write tools
 (`create_entity`, `update_entity`, `delete_entity`) modify production
 data — use them only when explicitly asked to change something.
+
+Attribute descriptions (`set_attribute_description`) are studio-wide.
+Never invent a description from the attribute name: ask the user what the
+attribute means and save their wording. If one already exists, show it and
+overwrite only after the user agrees.
 """
 
 
@@ -34,6 +39,9 @@ Safety rules:
 - Do not call destructive or mutating endpoints unless the user requested it.
 - For bulk operations, verify scope and intent because changes can affect
   production data.
+- Never invent an attribute description from the attribute name. Ask the
+  user what it means, save it with `set_attribute_description`, and pass
+  `overwrite=true` only after the user approved replacing the current text.
 """
 
 READ_ONLY_INSTRUCTIONS = """\

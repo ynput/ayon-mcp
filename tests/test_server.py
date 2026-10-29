@@ -234,6 +234,7 @@ class TestCreateMcpServer:
             "delete_entity",
             "dispatch_event",
             "set_addon_settings",
+            "set_attribute_description",
             "update_entity",
         }
         assert "read-only mode" in mcp.instructions

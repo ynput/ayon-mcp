@@ -7,7 +7,7 @@ name = "mcp"
 title = "AYON MCP server"
 
 # Required: Valid semantic version (https://semver.org/)
-version = "0.1.0"
+version = "0.2.0"
 
 # Name of client code directory imported in AYON launcher
 # - do not specify if there is no client code

@@ -1,6 +1,6 @@
 [project]
 name = "ayon-mcp"
-version = "0.1.0"
+version = "0.2.0"
 description = "MCP server exposing the AYON pipeline platform to AI assistants"
 readme = "README.md"
 authors = [

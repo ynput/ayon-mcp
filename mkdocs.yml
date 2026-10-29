@@ -1,0 +1,7 @@
+site_name: AYON MCP
+site_url: https://ynput.github.io/ayon-mcp/
+
+nav:
+  - Home: index.md
+  - Design:
+      - Guardrails: design/guardrails.md

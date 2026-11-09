@@ -25,6 +25,7 @@ from .guardrails import (
     build_guard_chain,
     read_only_enabled,
 )
+from .openapi_tools import rest_tool_of
 from .rest_policy import endpoint_of, is_admin, side_effect_for
 
 if TYPE_CHECKING:
@@ -86,8 +87,8 @@ def _tool_description(function: Callable[..., Any]) -> str:
 def tool_side_effect(function: Callable[..., Any]) -> SideEffectClass:
     """Classify a tool function as read-only, write, or destructive.
 
-    Curated tools are classified by name; generated REST tools by their
-    endpoint, via ``rest_policy``. Anything else is a curated read tool.
+    Curated tools are classified by name; REST tools by their endpoint,
+    via ``rest_policy``. Anything else is a curated read tool.
 
     Returns:
         The tool's ``SideEffectClass``.
@@ -142,14 +143,28 @@ def drop_admin_tools(
 def create_curated_tools(
     functions: list[Callable[..., Any]],
 ) -> list[AyonTool]:
-    """Build discovery records from FastMCP-compatible functions.
+    """Build discovery records from curated and REST tool functions.
 
     Returns:
-        Discovery records with FastMCP-derived input schemas.
+        Discovery records with FastMCP-derived input schemas, or for REST
+        tools the schemas from the OpenAPI spec.
 
     """
     tools = []
     for function in functions:
+        rest_tool = rest_tool_of(function)
+        if rest_tool is not None:
+            tools.append(
+                AyonTool(
+                    name=rest_tool.name,
+                    namespace=rest_tool.namespace,
+                    description=rest_tool.description or rest_tool.name,
+                    parameters=rest_tool.parameters,
+                    function=function,
+                    side_effect=tool_side_effect(function),
+                )
+            )
+            continue
         fastmcp_tool = FunctionTool.from_function(function)
         module = function.__module__.rsplit(".", maxsplit=1)[-1]
         tools.append(

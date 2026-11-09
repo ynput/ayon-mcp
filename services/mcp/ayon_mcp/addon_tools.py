@@ -91,7 +91,7 @@ async def call_addon_tool(
     client = client or get_global_rest_client()
     try:
         if method == "GET":
-            # Same as the generated REST tools' query parameters.
+            # Same as FastMCP's handling of REST tools' query parameters.
             params = {k: v for k, v in arguments.items() if v is not None}
             return await client.request(
                 method=method, path=path, params=params or None

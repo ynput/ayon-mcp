@@ -4,7 +4,6 @@ from __future__ import annotations
 import os
 import socket
 import sys
-from collections.abc import Iterator
 from pathlib import Path
 from unittest.mock import MagicMock
 from urllib.parse import urlparse
@@ -19,20 +18,6 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "services" / "mcp"))
 # the addon itself, which needs the AYON server.
 sys.path.append(str(Path(__file__).parent.parent / "server"))
 dotenv.load_dotenv(dotenv.find_dotenv(), override=True)
-
-
-GENERATED_DIR = (
-    Path(__file__).parent.parent
-    / "services" / "mcp" / "ayon_mcp" / "tools" / "openapi_generated"
-)
-
-requires_generated_tools = pytest.mark.skipif(
-    not (GENERATED_DIR / "__init__.py").exists(),
-    reason=(
-        "Generated OpenAPI tools are missing; run "
-        "`uv run python ./services/mcp/scripts/generate_openapi_tools.py`"
-    ),
-)
 
 
 def pytest_configure(config: pytest.Config) -> None:
@@ -50,26 +35,18 @@ def pytest_configure(config: pytest.Config) -> None:
 
 
 REPO_ROOT = Path(__file__).parent.parent
-OPENAPI_SPEC = REPO_ROOT / "services" / "mcp" / "ayon_openapi.json"
 DEFAULT_OLLAMA_HOST = "http://localhost:11434"
 DEFAULT_OLLAMA_MODEL = "qwen2.5:7b"
 DEFAULT_ANTHROPIC_MODEL = "claude-opus-5"
 
 
-@pytest.fixture(scope="session", autouse=True)
-def _restore_openapi_spec() -> Iterator[None]:
-    """Restore the tracked ``ayon_openapi.json`` after the test session.
+@pytest.fixture(autouse=True)
+def _no_rest_tools_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Skip fetching and parsing the OpenAPI spec for every created server.
 
-    Creating the MCP server syncs the spec from the AYON server configured
-    in ``.env`` and rewrites the file, which would leave the working tree
-    dirty after every run.
+    ``tests/test_openapi_tools.py`` enables REST tools where it needs them.
     """
-    original = OPENAPI_SPEC.read_bytes() if OPENAPI_SPEC.exists() else None
-    yield
-    if original is not None and (
-        not OPENAPI_SPEC.exists() or OPENAPI_SPEC.read_bytes() != original
-    ):
-        OPENAPI_SPEC.write_bytes(original)
+    monkeypatch.setenv("AYON_MCP_ENABLE_OPENAPI_TOOLS", "false")
 
 
 @pytest.fixture(scope="session")
@@ -165,10 +142,31 @@ def mcp_llm_server_params(
 ):
     """Build StdioServerParameters to spawn the MCP server for LLM tests.
 
-    Runs in discovery exposure mode with generated OpenAPI tools disabled,
-    so the tool surface stays small and startup doesn't need to sync
-    against the live server's OpenAPI spec.
+    Runs in discovery exposure mode with OpenAPI REST tools disabled, so the
+    tool surface stays small and startup doesn't need the server's spec.
     """
+    return _mcp_llm_server_params(
+        ayon_connection_env, telemetry_enabled, rest_tools=False
+    )
+
+
+@pytest.fixture
+def mcp_llm_rest_server_params(
+    ayon_connection_env: tuple[str, str],
+    telemetry_enabled: bool,
+):
+    """Like ``mcp_llm_server_params``, with OpenAPI REST tools enabled."""
+    return _mcp_llm_server_params(
+        ayon_connection_env, telemetry_enabled, rest_tools=True
+    )
+
+
+def _mcp_llm_server_params(
+    ayon_connection_env: tuple[str, str],
+    telemetry_enabled: bool,
+    *,
+    rest_tools: bool,
+):
     from mcp import StdioServerParameters
 
     server_url, api_key = ayon_connection_env
@@ -189,7 +187,7 @@ def mcp_llm_server_params(
         "AYON_SERVER_URL": server_url,
         "AYON_API_KEY": api_key,
         "AYON_MCP_TOOL_EXPOSURE": "discovery",
-        "AYON_MCP_ENABLE_OPENAPI_TOOLS": "false",
+        "AYON_MCP_ENABLE_OPENAPI_TOOLS": "true" if rest_tools else "false",
         "AYON_MCP_ENABLE_TELEMETRY": "1" if telemetry_enabled else "0",
     }
     return StdioServerParameters(command=command, args=args, env=env)

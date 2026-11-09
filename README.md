@@ -82,9 +82,27 @@ chunk by chunk, so SSE responses (progress notifications) are not buffered.
 </details>
 
 
+### Connecting without an API key
+
+When the AYON server has an authorization server (OAuth), an MCP client that
+supports it needs only the address:
+
+```sh
+claude mcp add --transport http ayon https://<ayon-server>/api/mcp
+```
+
+The first connection opens AYON in your browser: log in if asked, check
+which app is asking and approve it. The client then acts with your
+permissions, through the MCP endpoint only, until you disconnect it in AYON.
+
+This works in tunnel mode, where the client talks to the AYON server and
+the server checks the approval. A service listening on its own port takes
+an API key. So does a server without an authorization server: it answers
+the address with a plain 401.
+
 ### Getting your API key
 
-Every MCP client needs an AYON API key. Use a personal key of your own
+Without an authorization server, every MCP client needs an AYON API key. Use a personal key of your own
 AYON user, so the MCP acts with your permissions. Create it through AYON's
 API (AYON 1.17.3 or newer; older versions fail on a user's first key).
 Replace the server address, your user name and your password:

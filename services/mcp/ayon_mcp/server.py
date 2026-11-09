@@ -3,19 +3,16 @@
 from __future__ import annotations
 
 import asyncio
-import importlib
 import logging
 import os
 from collections import OrderedDict
 from typing import TYPE_CHECKING, AsyncIterator
 
-import httpx
 from fastmcp import FastMCP
 from fastmcp.server.dependencies import get_http_headers
 from fastmcp.server.lifespan import lifespan
 from fastmcp.server.middleware import CallNext, Middleware, MiddlewareContext
 
-# from fastmcp.server.providers.openapi import MCPType, RouteMap
 from .addon_discovery import AddonCatalog
 from .client import get_ayon_api, set_global_ayon_client
 from .guardrails import read_only_enabled
@@ -25,7 +22,7 @@ from .instructions import (
     READ_ONLY_INSTRUCTIONS,
 )
 from .metrics import TokenMetrics
-from .openapi_codegen import sync_openapi_tools_from_server
+from .openapi_tools import load_rest_tools, rest_tool_of
 from .rest_client import RestApiClient, set_global_rest_client
 from .rest_policy import admin_tools_enabled
 from .tool_discovery import (
@@ -223,7 +220,11 @@ class StaticApiKeyMiddleware(Middleware):
 def register_tools(server: FastMCP, tools: Iterable[Callable]) -> None:
     """Registers a sequence of callable tools with the FastMCP instance."""
     for tool in tools:
-        server.tool()(tool)
+        rest_tool = rest_tool_of(tool)
+        if rest_tool is not None:
+            server.add_tool(rest_tool)
+        else:
+            server.tool()(tool)
 
 
 def create_mcp_server(base_url: str, api_key: str) -> FastMCP:
@@ -231,7 +232,7 @@ def create_mcp_server(base_url: str, api_key: str) -> FastMCP:
 
     Args:
         base_url: AYON server URL (e.g. http://localhost:5000)
-        api_key: AYON API key used for authenticated OpenAPI sync.
+        api_key: AYON API key used to fetch the OpenAPI spec.
 
     Returns:
         FastMCP instance configured with the AYON OpenAPI spec.
@@ -267,22 +268,6 @@ def create_mcp_server(base_url: str, api_key: str) -> FastMCP:
 
     from . import tools as tools_module
 
-    if tools_module.openapi_tools_enabled():
-        try:
-            changed = sync_openapi_tools_from_server(
-                base_url,
-                api_key=api_key,
-            )
-            if changed:
-                importlib.reload(tools_module)
-        # AYON down or slow: keep the generated tools, never fail start
-        except (httpx.HTTPError, OSError, TypeError, ValueError) as exc:
-            logger.warning(
-                "OpenAPI tool sync failed for %s/openapi.json: %r",
-                base_url.rstrip("/"),
-                exc,
-            )
-
     instructions = (
         OPENAPI_INSTRUCTIONS
         if tools_module.openapi_tools_enabled()
@@ -290,6 +275,12 @@ def create_mcp_server(base_url: str, api_key: str) -> FastMCP:
     )
 
     tools = list(tools_module.ALL_TOOLS)
+    if tools_module.openapi_tools_enabled():
+        tools += load_rest_tools(
+            base_url,
+            api_key,
+            reserved_names={tool.__name__ for tool in tools},
+        )
     if not admin_tools_enabled():
         # Secrets, credentials, user/access management and server lifecycle
         # endpoints are opt-in - see rest_policy.ADMIN_PATTERNS.
@@ -424,7 +415,7 @@ def run_tunnel(base_url: str, api_key: str) -> FastMCP:
 
     Args:
         base_url: AYON server URL (e.g. http://localhost:5000)
-        api_key: Service API key, used for the OpenAPI sync, to
+        api_key: Service API key, used to fetch the OpenAPI spec, to
             authenticate the tunnel and to act as the calling users.
 
     Returns:

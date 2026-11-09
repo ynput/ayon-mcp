@@ -313,7 +313,7 @@ default: read            # off | read | write
 namespaces:
   ayon.settings: read    # get_addon_settings yes, set_addon_settings no
   ayon.write: write
-  ayon.openapi.*: off    # whole generated layer hidden
+  ayon.openapi.*: off    # whole REST tool layer hidden
 tools:
   delete_entity: off
   add_comment: write
@@ -366,11 +366,9 @@ Resolution order: `tools` entry, then the most specific matching
 
 #### Prerequisites
 
-- **Namespace collision.** `create_curated_tools` derives the namespace
-  from the last module-path segment only, so generated tools land in
-  `ayon.settings`, `ayon.events`, `ayon.projects` — the same namespaces as
-  the curated modules. They need `ayon.openapi.<module>` before a policy
-  can target one layer without the other.
+- **Namespaces.** REST tools live in `ayon.openapi.<group>`, apart from the
+  curated `ayon.<module>` namespaces, so a policy can target one layer
+  without the other.
 - **Confirmation.** `confirm_mutation` is set by the model, so it
   effectively means "the model says the user agreed". MCP elicitation
   (fastmcp `ctx.elicit`) lets the server ask the human directly through
@@ -387,12 +385,11 @@ a bug in the policy code can't write.
 
 #### Suggested order
 
-1. Namespace fix (`ayon.openapi.<module>`).
-2. Stdio policy file via `AYON_MCP_POLICY` — smallest change, static
+1. Stdio policy file via `AYON_MCP_POLICY` — smallest change, static
    filtering at startup.
-3. Remote ceiling in addon settings + restrict-only header, with
+2. Remote ceiling in addon settings + restrict-only header, with
    per-request filtering.
-4. Elicitation-based confirmation for `write`.
+3. Elicitation-based confirmation for `write`.
 
 ## 4. Rollout plan
 

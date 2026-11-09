@@ -48,6 +48,7 @@ MUTATING_TOOL_NAMES = frozenset({
     "delete_entity",
     "dispatch_event",
     "set_addon_settings",
+    "set_attribute_description",
     "update_entity",
 })
 

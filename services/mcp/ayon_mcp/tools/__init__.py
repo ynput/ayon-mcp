@@ -4,6 +4,7 @@ from __future__ import annotations
 import os
 from typing import TYPE_CHECKING
 
+from .attributes import set_attribute_description
 from .entities import (
     get_entity,
     get_folder_hierarchy,
@@ -73,6 +74,9 @@ ALL_TOOLS: Sequence[Callable] = [  # ruff: ignore[non-empty-init-module]
     update_entity,
     delete_entity,
     add_comment,
+
+    # attributes
+    set_attribute_description,
 ]
 
 
@@ -118,6 +122,7 @@ __all__ = [
     "list_versions",
     "query_graphql",
     "set_addon_settings",
+    "set_attribute_description",
     "tool_exposure_mode",
     "update_entity",
 ]

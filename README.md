@@ -18,7 +18,7 @@ tasks, publishes, the event stream, and addon settings.
 
 - Python 3.10+ (or [uv](https://docs.astral.sh/uv/), which handles Python for you)
 - A reachable AYON server and an API key
-  (user profile → API keys, or a service user key)
+  (see [Getting your API key](#getting-your-api-key), or a service user key)
 
 ## Usage
 
@@ -82,43 +82,29 @@ chunk by chunk, so SSE responses (progress notifications) are not buffered.
 </details>
 
 
-### Getting your API key: the "Create my MCP key" action
+### Getting your API key
 
-Every MCP client needs an AYON API key, and the AYON web app has no screen
-for creating one. The addon adds a project action for it: open a project's
-overview page, open **Actions** in its toolbar and pick **Create my MCP
-key** (under MCP).
+Every MCP client needs an AYON API key. Use a personal key of your own
+AYON user, so the MCP acts with your permissions. Create it through AYON's
+API (AYON 1.17.3 or newer; older versions fail on a user's first key).
+Replace the server address, your user name and your password:
 
-1. A form asks how to copy the result: the Claude Code `claude mcp add`
-   command, an entry for a project's `.mcp.json`, an entry for VS Code's
-   `.vscode/mcp.json`, or a Claude Desktop entry. It also asks which
-   machine the key is for (optional, it goes into the key's label).
-2. **Create key** creates an API key for you and shows the chosen
-   configuration, with the key in it, ready to copy. The key is shown
-   only this once.
+```sh
+AYON=https://ayon.example.com
+TOKEN=$(curl -s -X POST "$AYON/api/auth/login" -H 'content-type: application/json' \
+  -d '{"name": "<you>", "password": "<password>"}' | jq -r .token)
+KEY=$(openssl rand -hex 16)
+curl -X POST "$AYON/api/users/<you>/apikeys" \
+  -H "Authorization: Bearer $TOKEN" -H 'content-type: application/json' \
+  -d "{\"label\": \"mcp-laptop\", \"key\": \"$KEY\", \"expires\": $(( $(date +%s) + 90 * 86400 ))}"
+echo "$KEY"
+```
 
-The key belongs to your own AYON user, so the MCP acts with your
-permissions. It is stored like any other AYON API key, labelled
-`mcp-<machine>-<date>-<last four characters>`. The configuration points
-at this AYON server's `/api/mcp` and names the server `ayon`; rename it in
-your client if you need another name.
-
-Addon settings (Studio settings > MCP > API key action):
-
-| Setting | Default | Meaning |
-| --- | --- | --- |
-| Enabled | on | Show the action at all |
-| Projects | empty | Projects where the action is offered. Empty: every project |
-| Allowed email domains | empty | Only users with an email in these domains may use the action. Empty: every user. Guests and service users never may |
-| Key lifetime in days | 365 | Lifetime of keys the action creates. 0: the key never expires |
-
-The settings come from the production variant, or from staging or a dev
-bundle when the action runs there; any other variant falls back to
-production.
-
-These settings shape the action, they are not an access control: users
-can edit their own email, and AYON lets every user create their own API
-keys, with any expiry, through `POST /api/users/{name}/apikeys`.
+The key expires after 90 days. It is shown only by the last command, and
+AYON stores only its hash. Use it in one of the remote (http)
+configurations below, with `$AYON/api/mcp` as the URL. To revoke it,
+`DELETE $AYON/api/users/<you>/apikeys/<id>` (the id is listed by
+`GET $AYON/api/users/<you>/apikeys`).
 
 ## VSCode (and derivates)
 You can manually configure MCP servers by editing the `mcp.json` file. There are two locations for this file:

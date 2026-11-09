@@ -20,7 +20,9 @@ import httpx
 from fastmcp import FastMCP
 from fastmcp.server.providers.openapi import MCPType, RouteMap
 from fastmcp.tools.base import Tool, ToolResult
-from fastmcp.utilities.openapi import HTTPRoute  # ruff: ignore[typing-only-third-party-import]
+from fastmcp.utilities.openapi import (
+    HTTPRoute,  # ruff: ignore[typing-only-third-party-import]
+)
 from mcp.types import TextContent
 
 from .rest_client import get_global_rest_client

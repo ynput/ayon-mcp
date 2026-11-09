@@ -124,6 +124,8 @@ ADMIN_PATTERNS: tuple[AdminPattern, ...] = tuple(
         (_ANY, r"^/api/users/acceptInvite$"),
         (_ANY, r"^/api/users/\{user_name\}/(accessGroups|rename|invite)$"),
         (_WRITES, r"^/api/users/\{user_name\}$"),
+        # Changes the email address a password reset is sent to.
+        (_WRITES, r"^/api/profile$"),
         (_WRITES, r"^/api/accessGroups/"),
         (_WRITES, r"^/api/projects/\{project_name\}/users/\{user_name\}$"),
         (_WRITES, r"^/api/addons$"),

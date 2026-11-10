@@ -341,8 +341,11 @@ like `ServiceUserMiddleware._clients`). The auth middlewares resolve the
   discovery provider, which puts the policy in a contextvar.
 - CLI: `ayon-mcp --explain-policy <user>` prints the user's identity,
   resolved policy and visible tools by namespace — the answer to "why
-  can't X see tool Y". Covers curated, REST and addon tools (one addon
-  discovery run). Needs an admin or service key (reads
+  can't X see tool Y". Mirrors the service's configuration: curated, REST
+  and (in discovery mode) addon tools, one addon discovery run; the addon
+  settings apply only when the service would use them
+  (`AYON_MCP_POLICY_SETTINGS`, exposure mode), reported as
+  `settings_used`. Needs an admin or service key (reads
   `/api/users/{name}`).
 - Log the matched rules per call at debug level.
 

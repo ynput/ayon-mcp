@@ -6,7 +6,7 @@ import asyncio
 import logging
 import os
 from collections import OrderedDict
-from typing import TYPE_CHECKING, AsyncIterator
+from typing import TYPE_CHECKING, Any, AsyncIterator
 
 from fastmcp import FastMCP
 from fastmcp.server.dependencies import get_http_headers
@@ -23,10 +23,18 @@ from .instructions import (
 )
 from .metrics import TokenMetrics
 from .openapi_tools import load_rest_tools, rest_tool_of
-from .policy import PolicyStore, policy_settings_enabled
+from .policy import (
+    EffectivePolicy,
+    PolicyStore,
+    policy_settings_enabled,
+    resolve,
+)
 from .rest_client import RestApiClient, set_global_rest_client
 from .rest_policy import admin_tools_enabled
 from .tool_discovery import (
+    AyonTool,
+    create_addon_ayon_tools,
+    create_curated_tools,
     create_discovery_tools,
     drop_admin_tools,
     drop_mutating_tools,
@@ -228,6 +236,121 @@ def register_tools(server: FastMCP, tools: Iterable[Callable]) -> None:
             server.tool()(tool)
 
 
+def collect_tools(base_url: str, api_key: str) -> list[Callable]:
+    """Return the curated and REST tool functions the env vars allow.
+
+    Returns:
+        The tool functions, without admin tools unless
+        ``AYON_MCP_ADMIN_TOOLS`` and without mutating tools in
+        ``AYON_MCP_READ_ONLY`` mode.
+
+    """
+    from . import tools as tools_module
+
+    tools = list(tools_module.ALL_TOOLS)
+    if tools_module.openapi_tools_enabled():
+        tools += load_rest_tools(
+            base_url,
+            api_key,
+            reserved_names={tool.__name__ for tool in tools},
+        )
+    if not admin_tools_enabled():
+        # Secrets, credentials, user/access management and server lifecycle
+        # endpoints are opt-in - see rest_policy.ADMIN_PATTERNS.
+        tools = drop_admin_tools(tools)
+    if read_only_enabled():
+        # Not registering mutating tools at all covers direct exposure mode
+        # too, where calls never pass through AyonDynamicToolProvider.
+        tools = drop_mutating_tools(tools)
+    return tools
+
+
+async def _load_addon_tools(
+    base_url: str, api_key: str, reserved_names: set[str]
+) -> list[AyonTool]:
+    """Discover addon MCP tools once, as the service catalog would.
+
+    Returns:
+        The addon tools, empty when ``AYON_MCP_ENABLE_ADDON_TOOLS`` is off.
+
+    """
+    if not addon_tools_enabled():
+        return []
+    catalog = AddonCatalog(
+        base_url,
+        api_key,
+        variant=addon_tools_variant(),
+        refresh_interval=0,
+    )
+    try:
+        # The first load is awaited.
+        await catalog.refresh()
+    finally:
+        await catalog.close()
+    return create_addon_ayon_tools(
+        catalog.tools, reserved_names=reserved_names
+    )
+
+
+async def explain_policy(
+    base_url: str, api_key: str, user_name: str
+) -> dict[str, Any]:
+    """Explain the MCP policy a user gets and the tools it lets them use.
+
+    Covers curated, REST and addon tools, as the discovery provider would
+    catalog them.
+
+    Args:
+        base_url: AYON server URL.
+        api_key: Service API key, able to read users and addon settings.
+        user_name: The AYON user to explain.
+
+    Returns:
+        The user's identity, effective policy, and visible tools by
+        namespace.
+
+    """
+    store = PolicyStore(base_url, api_key)
+    settings = await store.settings()
+    identity = await store.identity_of(user_name)
+    policy = resolve(identity, settings, EffectivePolicy.from_env())
+    tools = create_curated_tools(
+        await asyncio.to_thread(collect_tools, base_url, api_key)
+    )
+    tools += await _load_addon_tools(
+        base_url, api_key, reserved_names={tool.name for tool in tools}
+    )
+    visible: dict[str, list[str]] = {}
+    for tool in tools:
+        if policy.allows_tool(
+            tool.name,
+            tool.namespace,
+            tool.side_effect,
+            admin=tool.admin,
+            endpoint=tool.endpoint,
+        ):
+            visible.setdefault(tool.namespace, []).append(tool.name)
+    visible_count = sum(len(names) for names in visible.values())
+    return {
+        "user": user_name,
+        "identity": (
+            {
+                "level": identity.level,
+                "access_groups": sorted(identity.access_groups),
+            }
+            if identity is not None
+            else None
+        ),
+        "policy": policy.summary(),
+        "visible_tools": visible_count,
+        "hidden_tools": len(tools) - visible_count,
+        "tools": {
+            namespace: sorted(names)
+            for namespace, names in sorted(visible.items())
+        },
+    }
+
+
 def create_mcp_server(base_url: str, api_key: str) -> FastMCP:
     """Create the MCP server with the given AYON server URL.
 
@@ -275,21 +398,8 @@ def create_mcp_server(base_url: str, api_key: str) -> FastMCP:
         else INSTRUCTIONS
     )
 
-    tools = list(tools_module.ALL_TOOLS)
-    if tools_module.openapi_tools_enabled():
-        tools += load_rest_tools(
-            base_url,
-            api_key,
-            reserved_names={tool.__name__ for tool in tools},
-        )
-    if not admin_tools_enabled():
-        # Secrets, credentials, user/access management and server lifecycle
-        # endpoints are opt-in - see rest_policy.ADMIN_PATTERNS.
-        tools = drop_admin_tools(tools)
+    tools = collect_tools(base_url, api_key)
     if read_only_enabled():
-        # Not registering mutating tools at all covers direct exposure mode
-        # too, where calls never pass through AyonDynamicToolProvider.
-        tools = drop_mutating_tools(tools)
         instructions = f"{instructions}\n{READ_ONLY_INSTRUCTIONS}"
 
     mcp = FastMCP(

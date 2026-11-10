@@ -1,11 +1,14 @@
 """CLI interface for the AYON MCP server."""
 from __future__ import annotations
 
+import asyncio
+import json
 import os
 from urllib.parse import urlsplit
 
 import click
 
+from .server import explain_policy
 from .server import run_local as run_local_server
 from .server import run_remote as run_remote_server
 from .server import run_tunnel as run_tunnel_server
@@ -97,13 +100,25 @@ def build_server_url(host: str, port: int) -> str:
     show_envvar=True,
     help="AYON API key"
 )
-def main(
+@click.option(
+    "--explain-policy",
+    "explain_user",
+    default=None,
+    metavar="USER",
+    help=(
+        "Print the MCP policy USER gets from the MCP addon settings and "
+        "the tools it lets them use, then exit. Needs an admin or "
+        "service API key."
+    ),
+)
+def main(  # ruff: ignore[too-many-arguments]
     host: str,
     port: int | None,
     api_key: str | None,
     *,
     remote: bool = False,
-    tunnel: bool = False) -> None:
+    tunnel: bool = False,
+    explain_user: str | None = None) -> None:
     """Run the MCP server.
 
     Args:
@@ -112,6 +127,7 @@ def main(
         api_key: AYON API key (or set AYON_API_KEY)
         remote: Run the server in remote mode (as a service).
         tunnel: Run as a service behind the AYON server's MCP tunnel.
+        explain_user: Print this user's MCP policy instead of running.
 
     Raises:
         click.UsageError: If required arguments are missing or invalid.
@@ -126,6 +142,13 @@ def main(
                 "Set the AYON_API_KEY environment variable "
                 "or pass it as --api-key.")
             raise click.UsageError(msg)
+
+    if explain_user:
+        explanation = asyncio.run(
+            explain_policy(server_url, api_key, explain_user)
+        )
+        click.echo(json.dumps(explanation, indent=2))
+        return
 
     if tunnel:
         run_tunnel_server(server_url, api_key)

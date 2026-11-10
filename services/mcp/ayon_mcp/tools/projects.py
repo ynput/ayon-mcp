@@ -7,6 +7,7 @@ from typing import Any
 from pydantic import Field
 
 from ayon_mcp.client import get_global_ayon_client as api
+from ayon_mcp.policy import get_current_policy
 
 from .utils import _CamelModel
 
@@ -37,6 +38,14 @@ class ServerInfo(_CamelModel):
         default=False, description="Connected user is admin")
     user_is_service: bool = Field(
         default=False, description="Connected user is service account")
+    mcp_policy: dict[str, Any] | None = Field(
+        default=None,
+        description=(
+            "MCP policy this user's tool calls run under: guards, "
+            "read-only, admin tools, tool filters and the policy rules "
+            "that applied"
+        ),
+    )
 
 
 def list_projects(
@@ -97,7 +106,7 @@ def get_project(project_name: str) -> dict[str, Any]:
 
 
 def get_server_info() -> ServerInfo:
-    """Get AYON server version and the identity of the connected user.
+    """Get AYON server version, the connected user and their MCP policy.
 
     Useful as a connectivity check before other calls.
 
@@ -106,10 +115,12 @@ def get_server_info() -> ServerInfo:
 
     """
     user = api().get_user()
+    policy = get_current_policy()
     return ServerInfo(
         server_url=api().base_url,
         server_version=api().get_server_version(),
         user_name=user.get("name"),
         user_is_admin=user.get("data", {}).get("isAdmin", False),
         user_is_service=user.get("data", {}).get("isService", False),
+        mcp_policy=policy.summary() if policy is not None else None,
     )

@@ -36,7 +36,7 @@ def pytest_configure(config: pytest.Config) -> None:
 
 REPO_ROOT = Path(__file__).parent.parent
 DEFAULT_OLLAMA_HOST = "http://localhost:11434"
-DEFAULT_OLLAMA_MODEL = "qwen2.5:7b"
+DEFAULT_OLLAMA_MODEL = "qwen3.5:9b"
 DEFAULT_ANTHROPIC_MODEL = "claude-opus-5"
 
 

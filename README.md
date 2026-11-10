@@ -314,9 +314,9 @@ caller's policy (`mcpPolicy`), and
 tools (needs an admin or service API key). The service reads the settings
 with its own API key, from the MCP addon of the bundle of
 `AYON_MCP_ADDON_VARIANT` (default `production`), and caches them and each
-caller's user record for *Policy refresh* seconds. Per-user policy needs
-the default `discovery` exposure mode; `direct` mode keeps the env var
-policy for everyone.
+caller's user record for *Policy refresh* seconds. In `direct` exposure
+mode the same visibility rules filter `tools/list` and refuse calls to
+hidden tools; guards and mutation confirmation remain discovery-mode only.
 
 Generated REST tools are classified by HTTP method (`GET` read-only,
 `POST`/`PUT`/`PATCH` write, `DELETE` destructive), with a reviewed override

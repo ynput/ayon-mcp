@@ -1,6 +1,6 @@
 # Design: per-user / per-team MCP policy from addon settings
 
-Status: phases 1 and 2 implemented (issue #33), decisions taken 2026-11-10 (see section 7)
+Status: phases 1 to 3 implemented (issue #33), decisions taken 2026-11-10 (see section 7)
 Date: 2026-11-10
 Builds on: `guardrails.md` section 3.8 (per-tool access policy, proposed)
 
@@ -310,10 +310,13 @@ like `ServiceUserMiddleware._clients`). The auth middlewares resolve the
   - guard chain: cache one chain per `(guards, read_only)` pair (at most
     5 variants; with the env ceiling usually fewer), all sharing the one
     `CallerScopedRetrySafetyGuard` instance — extends the existing retry-guard carry-over in `_set_tools`.
-- **Direct mode**: middlewares gain `on_list_tools` (filter the list) and
-  `on_call_tool` (refuse hidden). Can ship later (phase 3); until then
-  document that per-user policy requires `discovery` mode, the same
-  stance `guardrails.md` 3.4 takes.
+- **Direct mode** (phase 3): the auth middlewares also bind the caller
+  in `on_list_tools` (without failing when a listing carries no
+  credentials), and `DirectPolicyMiddleware`, added right after the auth
+  middleware, filters `tools/list` and refuses calls to hidden tools with
+  the provider's messages. Only visibility applies: guards and mutation
+  confirmation stay discovery-mode only, the stance `guardrails.md` 3.4
+  takes.
 - **Instructions**: server instructions are sent once at `initialize`,
   before the policy matters per call. Keep them generic; refusals carry
   the reason ("read-only for your user by MCP policy rules 'X', 'Y'").
@@ -386,7 +389,8 @@ like `ServiceUserMiddleware._clients`). The auth middlewares resolve the
 
 **Phase 3 — direct exposure mode**
 
-10. `on_list_tools` / `on_call_tool` filtering in the auth middlewares.
+10. `on_list_tools` / `on_call_tool` filtering: auth middlewares bind
+    the caller for listings too; `DirectPolicyMiddleware` filters.
 
 **Later (not planned yet)**
 

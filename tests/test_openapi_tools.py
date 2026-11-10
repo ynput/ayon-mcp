@@ -333,6 +333,23 @@ async def test_requests_get_the_client_timeout(ayon, tracked_tools) -> None:
         pytest.param(httpx.Response(200, json={"a": 1}), {"a": 1}, id="object"),
         pytest.param(httpx.Response(200, json=[1, 2]), [1, 2], id="list"),
         pytest.param(httpx.Response(200, json=7), 7, id="number"),
+        # FastMCP wraps non-object bodies as {"result": value}; objects with
+        # only a "result" key must not be unwrapped as if FastMCP made them.
+        pytest.param(
+            httpx.Response(200, json={"result": [1, 2]}),
+            {"result": [1, 2]},
+            id="object-with-result-list",
+        ),
+        pytest.param(
+            httpx.Response(200, json={"result": False}),
+            {"result": False},
+            id="object-with-result-bool",
+        ),
+        pytest.param(
+            httpx.Response(200, json={"result": {"a": 1}}),
+            {"result": {"a": 1}},
+            id="object-with-result-object",
+        ),
         pytest.param(httpx.Response(200, text="a,b\n"), "a,b\n", id="text"),
         pytest.param(httpx.Response(204), None, id="empty"),
     ],

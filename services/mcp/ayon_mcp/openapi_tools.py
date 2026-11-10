@@ -23,7 +23,6 @@ from fastmcp.tools.base import Tool, ToolResult
 from fastmcp.utilities.openapi import (
     HTTPRoute,  # ruff: ignore[typing-only-third-party-import]
 )
-from mcp.types import TextContent
 
 from .rest_client import get_global_rest_client
 from .rest_policy import HTTP_METHOD_ATTR, HTTP_PATH_ATTR
@@ -60,6 +59,11 @@ _TRANSPORT_HEADERS = frozenset({
 _CALL_HEADERS: ContextVar[frozenset[str]] = ContextVar(
     "rest_tool_call_headers", default=frozenset()
 )
+# Collects the AYON responses of the current call, when its caller needs the
+# response body as AYON sent it.
+_CALL_RESPONSES: ContextVar[list[httpx.Response] | None] = ContextVar(
+    "rest_tool_call_responses", default=None
+)
 
 
 class _AyonTransport(httpx.AsyncBaseTransport):
@@ -82,7 +86,10 @@ class _AyonTransport(httpx.AsyncBaseTransport):
         for name in list(request.headers.keys()):
             if name.lower() not in allowed:
                 del request.headers[name]
-        return await get_global_rest_client().forward(request)
+        response = await get_global_rest_client().forward(request)
+        if (responses := _CALL_RESPONSES.get()) is not None:
+            responses.append(response)
+        return response
 
 
 def _declared_headers(
@@ -116,28 +123,42 @@ class RestTool(Tool):
         finally:
             _CALL_HEADERS.reset(token)
 
+    async def run_for_body(
+        self, arguments: dict[str, Any]
+    ) -> Any:  # ruff: ignore[any-type]
+        """Call the operation and return AYON's response body as it is.
 
-def _result_value(result: ToolResult) -> Any:  # ruff: ignore[any-type]
-    """Return the response body from a FastMCP tool result.
+        FastMCP's result can't be used for this: it wraps a JSON body that
+        is not an object as ``{"result": value}``, and sometimes wraps an
+        object too, so its result can't tell such a body apart from an
+        object AYON returned with a ``result`` key.
 
-    FastMCP keeps JSON objects as they are and wraps any other JSON value
-    as ``{"result": value}``. Non-JSON bodies end up as text content.
+        Returns:
+            The parsed JSON body, its text, or ``None`` for an empty body.
+
+        """
+        responses: list[httpx.Response] = []
+        token = _CALL_RESPONSES.set(responses)
+        try:
+            await self.run(arguments)
+        finally:
+            _CALL_RESPONSES.reset(token)
+        return _body(responses[-1])
+
+
+def _body(response: httpx.Response) -> Any:  # ruff: ignore[any-type]
+    """Return a read response's body: parsed JSON, text, or ``None``.
 
     Returns:
         The parsed JSON body, its text, or ``None`` for an empty body.
 
     """
-    structured = result.structured_content
-    if structured is not None:
-        if structured.keys() == {"result"} and not isinstance(
-            structured["result"], dict
-        ):
-            return structured["result"]
-        return structured
-    text = "".join(
-        item.text for item in result.content if isinstance(item, TextContent)
-    )
-    return text or None
+    if not response.content:
+        return None
+    try:
+        return json.loads(response.content)
+    except ValueError:
+        return response.text
 
 
 def _as_function(tool: RestTool) -> Callable[..., Any]:
@@ -148,7 +169,7 @@ def _as_function(tool: RestTool) -> Callable[..., Any]:
 
     """
     async def run(**arguments: Any) -> Any:  # ruff: ignore[any-type]
-        return _result_value(await tool.run(arguments))
+        return await tool.run_for_body(arguments)
 
     run.__name__ = tool.name
     run.__doc__ = tool.description

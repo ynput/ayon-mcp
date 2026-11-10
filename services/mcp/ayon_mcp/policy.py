@@ -321,7 +321,7 @@ def _parse_effect(item: Mapping[str, Any], name: str) -> PolicyEffect:
         tools=_parse_filter(item.get("tools"), f"{name} tools"),
         openapi=_parse_filter(openapi, f"{name} openapi"),
         openapi_enabled=_parse_switch(
-            openapi.get("enabled"), f"{name} openapi enabled"
+            openapi.get("rest_tools"), f"{name} openapi rest_tools"
         ),
         openapi_max_side_effect=_parse_enum(
             SideEffectClass,

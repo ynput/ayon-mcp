@@ -561,6 +561,67 @@ async def test_hidden_admin_tool_looks_unknown(
     assert schema["success"] is False
 
 
+def put_secret(secret_name: str) -> dict[str, str]:
+    """Save a secret."""
+    return {"name": secret_name}
+
+
+setattr(put_secret, HTTP_METHOD_ATTR, "PUT")
+setattr(put_secret, HTTP_PATH_ATTR, "/api/secrets/{secret_name}")
+
+
+@pytest.mark.asyncio
+async def test_hidden_admin_write_tool_looks_unknown_when_read_only(
+    store: FixedPolicyStore,
+) -> None:
+    provider = AyonDynamicToolProvider(
+        create_curated_tools([get_project, put_secret]),
+        policy_store=store,  # ty: ignore[invalid-argument-type]
+    )
+    store.current = EffectivePolicy(
+        guards=GuardsMode.DEFAULT,
+        read_only=True,
+        admin_tools=False,
+        matched_rules=("artists",),
+    )
+
+    result = await provider.call_tool(
+        "put_secret", {"secret_name": "x", "confirm_mutation": True}
+    )
+    schema = await provider.get_tool_schema("put_secret")
+
+    expected = "Tool 'put_secret' was not found."
+    assert result == {"success": False, "error": expected}
+    assert schema == {"success": False, "error": expected}
+
+
+@pytest.mark.asyncio
+async def test_search_follows_equal_sized_visible_sets(
+    store: FixedPolicyStore,
+) -> None:
+    provider = AyonDynamicToolProvider(
+        create_curated_tools([get_project, create_entity, get_secrets]),
+        policy_store=store,  # ty: ignore[invalid-argument-type]
+    )
+    no_admin = EffectivePolicy(
+        guards=GuardsMode.DEFAULT, read_only=False, admin_tools=False
+    )
+
+    async def found() -> set[str]:
+        return {
+            tool["name"]
+            for query in ("secrets", "create entity", "project")
+            for tool in await provider.search_tools(query, limit=10)
+        }
+
+    store.current = no_admin
+    assert await found() == {"get_project", "create_entity"}
+    store.current = _read_only()
+    assert await found() == {"get_project", "get_secrets"}
+    store.current = no_admin
+    assert await found() == {"get_project", "create_entity"}
+
+
 @pytest.mark.asyncio
 async def test_schema_cache_does_not_leak_hidden_tools(
     provider: AyonDynamicToolProvider, store: FixedPolicyStore

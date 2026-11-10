@@ -133,7 +133,7 @@ tri-state with `inherit` (= env value) as the default.
   `admin_tools: off` in the rules for everyone else (and the default
   rule). No extra MCP-side admin check: AYON itself refuses admin
   endpoints for non-admin callers.
-- `openapi.enabled`: effective = env AND settings.
+- `openapi.rest_tools`: effective = env AND settings.
 
 Consequences: startup filtering by env stays correct as-is (it removes what
 nobody can ever get), existing deployments behave identically while
@@ -166,7 +166,7 @@ does not take part):
 | `guards` | strictest (`off` < `default` < `strict`) |
 | `read_only` | any `on` wins |
 | `admin_tools` | any `off` wins |
-| `openapi.enabled` | any `off` wins |
+| `openapi.rest_tools` | any `off` wins |
 | `openapi.max_side_effect` | lowest |
 | `tools` / `openapi` filters | a tool must pass every matched rule's filter: allowlists intersect, denylists add up |
 
@@ -190,7 +190,7 @@ class ToolFilter(BaseSettingsModel):
     patterns: list[str] = []  # globs or re: regexes, see 4.3
 
 class OpenApiFilter(ToolFilter):
-    enabled: Inherit = "inherit"
+    rest_tools: Inherit = "inherit"  # not `enabled`: the frontend renders that as a header toggle
     max_side_effect: inherit / read_only / write / destructive
 
 class PolicyEffect(BaseSettingsModel):

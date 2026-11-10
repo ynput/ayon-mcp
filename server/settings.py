@@ -154,7 +154,7 @@ class ToolFilterModel(BaseSettingsModel):
 class OpenApiFilterModel(ToolFilterModel):
     """Which REST tools (generated from the OpenAPI spec) callers may use."""
 
-    enabled: str = SettingsField(
+    rest_tools: str = SettingsField(
         INHERIT,
         title="REST tools",
         enum_resolver=_switch_enum,

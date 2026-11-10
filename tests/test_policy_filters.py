@@ -108,7 +108,7 @@ def test_filters_are_parsed() -> None:
         "default_policy": {
             "tools": {"mode": "denylist", "patterns": ["set_*"]},
             "openapi": {
-                "enabled": "off",
+                "rest_tools": "off",
                 "max_side_effect": "read_only",
                 "mode": "allowlist",
                 "patterns": ["GET /api/projects*"],
@@ -136,7 +136,7 @@ def test_malformed_filters_hide_nothing(tools: object) -> None:
 def test_inherit_openapi_settings() -> None:
     settings = PolicySettings.parse({
         "default_policy": {
-            "openapi": {"enabled": "inherit", "max_side_effect": "inherit"}
+            "openapi": {"rest_tools": "inherit", "max_side_effect": "inherit"}
         }
     })
 

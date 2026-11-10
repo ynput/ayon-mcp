@@ -54,6 +54,14 @@ class GuardsMode(StrEnum):
     STRICT = "strict"
 
 
+# Strictness order of the guard profiles, used to merge policies.
+GUARDS_RANK: dict[GuardsMode, int] = {
+    GuardsMode.OFF: 0,
+    GuardsMode.DEFAULT: 1,
+    GuardsMode.STRICT: 2,
+}
+
+
 def guards_mode() -> GuardsMode:
     """Return the guard chain profile configured via ``AYON_MCP_GUARDS``.
 
@@ -167,15 +175,28 @@ def classify_side_effects(
     return {tool.name: tool.side_effect for tool in tools}
 
 
-def build_guard_chain(tools: list[AyonTool]) -> GuardChain | None:
+def build_guard_chain(
+    tools: list[AyonTool],
+    mode: GuardsMode | None = None,
+    *,
+    read_only: bool | None = None,
+) -> GuardChain | None:
     """Build the guard chain applied to every AYON tool call.
 
+    Args:
+        tools: The catalogued tools, for schemas and side effects.
+        mode: Guard profile; ``AYON_MCP_GUARDS`` when omitted.
+        read_only: Read-only mode; ``AYON_MCP_READ_ONLY`` when omitted.
+
     Returns:
-        A configured ``GuardChain`` for the ``AYON_MCP_GUARDS`` profile
-        (``default`` or ``strict``), or ``None`` when it is ``off``.
+        A configured ``GuardChain`` for the profile (``default`` or
+        ``strict``), or ``None`` when it is ``off``.
 
     """
-    mode = guards_mode()
+    if mode is None:
+        mode = guards_mode()
+    if read_only is None:
+        read_only = read_only_enabled()
     if mode is GuardsMode.OFF:
         return None
 
@@ -185,7 +206,7 @@ def build_guard_chain(tools: list[AyonTool]) -> GuardChain | None:
         tool = tools_by_name.get(tool_name)
         return tool.parameters if tool is not None else None
 
-    if read_only_enabled():
+    if read_only:
         execution_mode = ExecutionMode.READ_ONLY
     elif mode is GuardsMode.STRICT:
         execution_mode = ExecutionMode.WRITE_ALLOWED

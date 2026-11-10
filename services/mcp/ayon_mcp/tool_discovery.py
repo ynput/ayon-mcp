@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import inspect
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any
 
 from chuk_tool_processor.discovery import (
@@ -297,8 +297,11 @@ def hidden_tool_error(
     """Return why a caller can't use a tool its policy hides.
 
     A hidden admin or filtered tool looks exactly like an unknown one. A
-    write tool hidden by read-only mode says so, so the model explains the
-    refusal instead of searching for a workaround.
+    write tool hidden only by read-only mode says so, so the model
+    explains the refusal instead of searching for a workaround. A tool
+    that would stay hidden without read-only mode (an admin or filtered
+    tool that also writes) still looks unknown, so its name is never
+    confirmed.
 
     Args:
         tool: The catalogued tool.
@@ -312,7 +315,11 @@ def hidden_tool_error(
     """
     if is_visible(tool, policy):
         return None
-    if policy.read_only and tool.requires_confirmation:
+    if (
+        policy.read_only
+        and tool.requires_confirmation
+        and is_visible(tool, replace(policy, read_only=False))
+    ):
         return _read_only_error(tool, policy)
     return f"Tool '{requested_name or tool.name}' was not found."
 
@@ -454,8 +461,10 @@ class AyonDynamicToolProvider(BaseDynamicToolProvider[AyonTool]):
         """Return why the caller can't use a tool hidden by its policy.
 
         A hidden admin tool looks exactly like an unknown one. A write
-        tool hidden by read-only mode says so, so the model explains the
-        refusal instead of searching for a workaround.
+        tool hidden only by read-only mode says so, so the model explains
+        the refusal instead of searching for a workaround. A tool that
+        would stay hidden without read-only mode (an admin tool that also
+        writes) still looks unknown, so its name is never confirmed.
 
         Returns:
             The error message, or ``None`` if the tool is not hidden.

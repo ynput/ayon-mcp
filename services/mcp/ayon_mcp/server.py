@@ -419,8 +419,10 @@ async def explain_policy(
 ) -> dict[str, Any]:
     """Explain the MCP policy a user gets and the tools it lets them use.
 
-    Covers curated, REST and addon tools, as the discovery provider would
-    catalog them.
+    Mirrors the running service's configuration: curated and REST tools,
+    plus addon tools in discovery exposure mode. The addon settings apply
+    unless ``AYON_MCP_POLICY_SETTINGS`` is off; then the env var policy
+    applies.
 
     Args:
         base_url: AYON server URL.
@@ -432,16 +434,25 @@ async def explain_policy(
         namespace.
 
     """
+    from . import tools as tools_module
+
+    discovery = tools_module.tool_exposure_mode() != "direct"
+    # Both exposure modes apply the settings (direct mode through
+    # DirectPolicyMiddleware).
+    settings_used = policy_settings_enabled()
     store = PolicyStore(base_url, api_key)
-    settings = await store.settings()
     identity = await store.identity_of(user_name)
-    policy = resolve(identity, settings, EffectivePolicy.from_env())
+    policy = EffectivePolicy.from_env()
+    if settings_used:
+        policy = resolve(identity, await store.settings(), policy)
     tools = create_curated_tools(
         await asyncio.to_thread(collect_tools, base_url, api_key)
     )
-    tools += await _load_addon_tools(
-        base_url, api_key, reserved_names={tool.name for tool in tools}
-    )
+    if discovery:
+        # Direct exposure mode never registers addon tools.
+        tools += await _load_addon_tools(
+            base_url, api_key, reserved_names={tool.name for tool in tools}
+        )
     visible: dict[str, list[str]] = {}
     for tool in tools:
         if policy.allows_tool(
@@ -463,6 +474,7 @@ async def explain_policy(
             if identity is not None
             else None
         ),
+        "settings_used": settings_used,
         "policy": policy.summary(),
         "visible_tools": visible_count,
         "hidden_tools": len(tools) - visible_count,

@@ -160,6 +160,23 @@ async def test_tool_filters_apply() -> None:
 
 
 @pytest.mark.asyncio
+async def test_filtered_write_tool_looks_unknown_when_read_only() -> None:
+    policy = EffectivePolicy(
+        guards=GuardsMode.DEFAULT,
+        read_only=True,
+        admin_tools=True,
+        matched_rules=("artists",),
+        tool_filters=(ToolFilter(FilterMode.DENYLIST, ("create_*",)),),
+    )
+
+    # Read-only alone would not reveal it: the denylist hides it anyway.
+    assert await _call(_server(policy), "create_entity", entity_id="x") == (
+        True,
+        "Tool 'create_entity' was not found.",
+    )
+
+
+@pytest.mark.asyncio
 async def test_calls_see_the_caller_policy() -> None:
     policy = EffectivePolicy(
         guards=GuardsMode.DEFAULT,

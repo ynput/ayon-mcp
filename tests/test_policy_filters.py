@@ -452,8 +452,16 @@ def test_cli_explains_a_user_policy(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 @pytest.mark.asyncio
-async def test_explain_policy_covers_addon_tools(
-    monkeypatch: pytest.MonkeyPatch,
+@pytest.mark.parametrize(
+    ("exposure", "settings_env"),
+    [
+        ("discovery", "true"),
+        ("discovery", "false"),
+        ("direct", "true"),
+    ],
+)
+async def test_explain_policy_mirrors_the_service(
+    monkeypatch: pytest.MonkeyPatch, exposure: str, settings_env: str
 ) -> None:
     from ayon_mcp import server
     from ayon_mcp.addon_discovery import AddonTool, AddonToolEndpoint
@@ -508,13 +516,29 @@ async def test_explain_policy_covers_addon_tools(
     monkeypatch.setattr(server, "AddonCatalog", FakeCatalog)
     monkeypatch.setattr(server, "PolicyStore", FakeStore)
     monkeypatch.setenv("AYON_MCP_ENABLE_ADDON_TOOLS", "true")
+    monkeypatch.setenv("AYON_MCP_POLICY_SETTINGS", settings_env)
+    monkeypatch.setenv("AYON_MCP_TOOL_EXPOSURE", exposure)
 
     explanation = await server.explain_policy("http://ayon.test", "key", "joe")
 
-    assert explanation["tools"]["ayon.addon.reports"] == ["reports_summary"]
     assert "list_projects" in explanation["tools"]["ayon.projects"]
-    assert explanation["policy"]["matched_rules"] == ["artists"]
-    assert FakeCatalog.closed
+    assert explanation["identity"]["access_groups"] == ["artist"]
+    settings_used = settings_env == "true"
+    assert explanation["settings_used"] is settings_used
+    assert explanation["policy"]["matched_rules"] == (
+        ["artists"] if settings_used else []
+    )
+    if exposure == "direct":
+        # Direct mode never registers addon tools: no discovery run.
+        assert "ayon.addon.reports" not in explanation["tools"]
+        assert not FakeCatalog.closed
+    else:
+        assert explanation["tools"]["ayon.addon.reports"] == (
+            ["reports_summary"]
+            if settings_used
+            else ["reports_rebuild", "reports_summary"]
+        )
+        assert FakeCatalog.closed
 
 
 @pytest.mark.asyncio

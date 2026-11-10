@@ -70,18 +70,21 @@ middlewares to also hook `on_list_tools` (or `on_request`).
 
 `BaseDynamicToolProvider` (chuk-tool-processor):
 
-- `search_tools` re-indexes when `len(get_all_tools())` changes — returning
-  a per-user list from `get_all_tools()` would re-index on every user
-  switch and race between concurrent users.
+- `search_tools` re-indexes when `len(get_all_tools())` changes, but the
+  engine scores the tool list it is given (`search(tools=...)`); the
+  inverted index it builds is never read. A per-user `get_all_tools()`
+  therefore can't leak or drop tools between callers, even with
+  equal-sized visible sets; it only costs a re-index when the size
+  changes.
 - `get_tool_schema` caches schemas by name in `_tool_cache`, shared by all
   users.
 - `filter_search_results` is a hook, but runs after the engine took
   `limit * 2` candidates, so heavy filtering returns too few results.
 
-So `get_all_tools()` must keep returning the full catalog, and visibility
-is applied in overridden `list_tools`, `search_tools` (passing the visible
-subset as `tools=` to the engine, which accepts it), `get_tool_schema` and
-`execute_tool`.
+So `get_all_tools()` returns the caller's visible subset, which covers
+`list_tools`, `search_tools` and alias resolution of the base class.
+`get_tool_schema`, `call_tool` and `execute_tool` check access themselves,
+because the schema cache is shared.
 
 ### 2.6 Addon settings are readable by the service
 
@@ -299,8 +302,8 @@ like `ServiceUserMiddleware._clients`). The auth middlewares resolve the
 - **Startup** (`create_mcp_server`): unchanged — env ceiling drops what
   nobody may use.
 - **Provider** (`AyonDynamicToolProvider`):
-  - keep `get_all_tools()` returning the full catalog (2.5);
-  - override `list_tools` and `search_tools` to use the visible subset;
+  - `get_all_tools()` returns the caller's visible subset (2.5), so the
+    inherited `list_tools` and `search_tools` only see allowed tools;
   - `get_tool_schema` / `call_tool` / `execute_tool`: a hidden admin
     tool behaves exactly like an unknown one ("was not found"). A write
     tool hidden by read-only mode is refused with the reason instead, so
@@ -341,8 +344,10 @@ like `ServiceUserMiddleware._clients`). The auth middlewares resolve the
   discovery provider, which puts the policy in a contextvar.
 - CLI: `ayon-mcp --explain-policy <user>` prints the user's identity,
   resolved policy and visible tools by namespace — the answer to "why
-  can't X see tool Y". Covers curated, REST and addon tools (one addon
-  discovery run). Needs an admin or service key (reads
+  can't X see tool Y". Mirrors the service's configuration: curated, REST
+  and (in discovery mode) addon tools, one addon discovery run; the addon
+  settings apply unless `AYON_MCP_POLICY_SETTINGS` is off, reported as
+  `settings_used`. Needs an admin or service key (reads
   `/api/users/{name}`).
 - Log the matched rules per call at debug level.
 

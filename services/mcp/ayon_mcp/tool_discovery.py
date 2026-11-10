@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import inspect
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any
 
 from chuk_tool_processor.discovery import (
@@ -425,8 +425,10 @@ class AyonDynamicToolProvider(BaseDynamicToolProvider[AyonTool]):
         """Return why the caller can't use a tool hidden by its policy.
 
         A hidden admin tool looks exactly like an unknown one. A write
-        tool hidden by read-only mode says so, so the model explains the
-        refusal instead of searching for a workaround.
+        tool hidden only by read-only mode says so, so the model explains
+        the refusal instead of searching for a workaround. A tool that
+        would stay hidden without read-only mode (an admin tool that also
+        writes) still looks unknown, so its name is never confirmed.
 
         Returns:
             The error message, or ``None`` if the tool is not hidden.
@@ -435,7 +437,11 @@ class AyonDynamicToolProvider(BaseDynamicToolProvider[AyonTool]):
         tool = self._find_tool(tool_name)
         if tool is None or self._is_visible(tool, policy):
             return None
-        if policy.read_only and tool.requires_confirmation:
+        if (
+            policy.read_only
+            and tool.requires_confirmation
+            and self._is_visible(tool, replace(policy, read_only=False))
+        ):
             return _read_only_error(tool, policy)
         return f"Tool '{tool_name}' was not found."
 

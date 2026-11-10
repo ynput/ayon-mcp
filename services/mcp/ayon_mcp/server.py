@@ -23,6 +23,7 @@ from .instructions import (
 )
 from .metrics import TokenMetrics
 from .openapi_tools import load_rest_tools, rest_tool_of
+from .policy import PolicyStore, policy_settings_enabled
 from .rest_client import RestApiClient, set_global_rest_client
 from .rest_policy import admin_tools_enabled
 from .tool_discovery import (
@@ -302,10 +303,17 @@ def create_mcp_server(base_url: str, api_key: str) -> FastMCP:
         base_url, api_key, tools_module.tool_exposure_mode()
     )
     if tools_module.tool_exposure_mode() == "direct":
+        # Per-user policy needs discovery mode; direct mode keeps the
+        # env var policy for everyone.
         register_tools(mcp, tools)
     else:
         register_tools(
-            mcp, create_discovery_tools(tools, addon_catalog=addon_catalog)
+            mcp,
+            create_discovery_tools(
+                tools,
+                addon_catalog=addon_catalog,
+                policy_store=_create_policy_store(base_url, api_key),
+            ),
         )
 
     return mcp
@@ -336,6 +344,19 @@ def _create_addon_catalog(
         variant=addon_tools_variant(),
         refresh_interval=addon_tools_refresh_interval(),
     )
+
+
+def _create_policy_store(base_url: str, api_key: str) -> PolicyStore | None:
+    """Return the per-caller policy source, or None to use env vars only.
+
+    Returns:
+        A store reading the MCP addon's settings with ``api_key``; None
+        when disabled or without a key to read them with.
+
+    """
+    if not policy_settings_enabled() or not api_key:
+        return None
+    return PolicyStore(base_url, api_key)
 
 
 def addon_tools_enabled() -> bool:

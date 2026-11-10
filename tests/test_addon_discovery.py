@@ -24,6 +24,7 @@ from ayon_mcp.addon_discovery import (
 )
 from ayon_mcp.addon_tools import AddonToolError, call_addon_tool
 from ayon_mcp.client import get_global_ayon_as_user, set_global_ayon_as_user
+from ayon_mcp.policy import EffectivePolicy
 from ayon_mcp.tool_discovery import (
     AyonDynamicToolProvider,
     create_addon_ayon_tools,
@@ -1142,14 +1143,14 @@ def test_catalog_rebuild_keeps_retry_history(monkeypatch):
     routes = _bundle_routes("1.0.0", ["old_tool"])
     catalog, _ = _catalog(monkeypatch, routes)
     provider = AyonDynamicToolProvider([], addon_catalog=catalog)
-    retry_guard = provider._retry_guard
+    policy = EffectivePolicy.from_env()
+    retry_guard = provider._chain_for(policy).get("retry_safety")
     assert retry_guard is not None
 
     routes.update(_bundle_routes("1.1.0", ["new_tool"]))
     asyncio.run(provider._sync_addon_tools(force=True))
 
-    assert provider._retry_guard is retry_guard
-    assert provider._guard_chain.get("retry_safety") is retry_guard
+    assert provider._chain_for(policy).get("retry_safety") is retry_guard
 
 
 def test_forced_refresh_does_not_stop_at_a_stale_running_load(monkeypatch):

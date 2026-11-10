@@ -1,6 +1,6 @@
 # Design: per-user / per-team MCP policy from addon settings
 
-Status: phase 1 implemented (issue #33), decisions taken 2026-11-10 (see section 7)
+Status: phases 1 and 2 implemented (issue #33), decisions taken 2026-11-10 (see section 7)
 Date: 2026-11-10
 Builds on: `guardrails.md` section 3.8 (per-tool access policy, proposed)
 
@@ -178,14 +178,13 @@ class Inherit(StrEnum): inherit / on / off            # bool knobs
 class GuardsChoice(StrEnum): inherit / off / default / strict
 
 class ListMode(StrEnum):
-    inherit = "inherit"       # use the default rule's list
-    all = "all"               # no filtering
+    all = "all"               # no filtering (no opinion)
     allowlist = "allowlist"   # only matching patterns
     denylist = "denylist"     # all except matching patterns
 
 class ToolFilter(BaseSettingsModel):
-    mode: ListMode = "inherit"
-    patterns: list[str] = []  # globs, see 4.3
+    mode: ListMode = "all"
+    patterns: list[str] = []  # globs or re: regexes, see 4.3
 
 class OpenApiFilter(ToolFilter):
     enabled: Inherit = "inherit"
@@ -250,8 +249,9 @@ service logs an error. Compiled patterns are cached per settings load.
 A pattern matches if it matches any of:
 
 - tool name: `get_folders`, `set_*`
-- namespace: `ayon.entities.*`, `ayon.addon.shotgrid.*`,
-  `ayon.openapi.projects`
+- namespace: `ayon.addon.shotgrid`, `ayon.openapi.projects`
+- qualified name `<namespace>.<name>`: `ayon.entities.*`,
+  `ayon.write.delete_*`
 - REST endpoint (OpenAPI filter only): `GET /api/projects/*`,
   `* /api/addons/*/settings` — uses `rest_policy.endpoint_of`
 
@@ -260,8 +260,13 @@ A pattern matches if it matches any of:
 separately from curated ones, e.g. curated writes allowed but REST
 read-only.
 
+Filter mode has no `inherit`: `all` is "no opinion", and a rule's
+filter adds to the others (a tool must pass every matched rule's
+filter), so there is nothing to inherit. An allowlist without patterns
+allows no tool.
+
 Tool names are dynamic (server's OpenAPI spec, addon tools), so the
-settings UI cannot validate them. Mitigation: the "explain" tool in 4.7.
+settings UI cannot validate them. Mitigation: the "explain" output in 4.7.
 
 ### 4.4 Resolution
 
@@ -328,10 +333,14 @@ like `ServiceUserMiddleware._clients`). The auth middlewares resolve the
 
 ### 4.7 Observability
 
-- `get_server_info` (or a new `get_my_mcp_policy` curated tool) returns
-  the caller's effective policy and the names of the matched rules.
-- CLI: `ayon-mcp policy explain --user <name>` prints the resolved policy
-  and which tools are visible — the answer to "why can't X see tool Y".
+- `get_server_info` returns the caller's effective policy
+  (`mcpPolicy`: settings, filters, matched rules) when called through the
+  discovery provider, which puts the policy in a contextvar.
+- CLI: `ayon-mcp --explain-policy <user>` prints the user's identity,
+  resolved policy and visible tools by namespace — the answer to "why
+  can't X see tool Y". Covers curated, REST and addon tools (one addon
+  discovery run). Needs an admin or service key (reads
+  `/api/users/{name}`).
 - Log the matched rules per call at debug level.
 
 ## 5. Security notes

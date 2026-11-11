@@ -523,7 +523,7 @@ async def test_explain_policy_mirrors_the_service(
 
     assert "list_projects" in explanation["tools"]["ayon.projects"]
     assert explanation["identity"]["access_groups"] == ["artist"]
-    settings_used = settings_env == "true" and exposure == "discovery"
+    settings_used = settings_env == "true"
     assert explanation["settings_used"] is settings_used
     assert explanation["policy"]["matched_rules"] == (
         ["artists"] if settings_used else []

@@ -9,6 +9,7 @@ from collections import OrderedDict
 from typing import TYPE_CHECKING, Any, AsyncIterator
 
 from fastmcp import FastMCP
+from fastmcp.exceptions import ToolError
 from fastmcp.server.dependencies import get_http_headers
 from fastmcp.server.lifespan import lifespan
 from fastmcp.server.middleware import CallNext, Middleware, MiddlewareContext
@@ -28,6 +29,7 @@ from .policy import (
     PolicyStore,
     policy_settings_enabled,
     resolve,
+    set_current_policy,
 )
 from .rest_client import RestApiClient, set_global_rest_client
 from .rest_policy import admin_tools_enabled
@@ -38,19 +40,75 @@ from .tool_discovery import (
     create_discovery_tools,
     drop_admin_tools,
     drop_mutating_tools,
+    hidden_tool_error,
+    is_visible,
 )
 
 logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Iterable
+    from collections.abc import Callable, Iterable, Sequence
 
     import ayon_api
     import mcp.types as mcp_types
-    from fastmcp.tools import ToolResult
+    from fastmcp.tools import Tool, ToolResult
 
 
-class RemoteApiKeyMiddleware(Middleware):
+class _AuthMiddleware(Middleware):
+    """Bind the caller's AYON client for tool calls and tool listing.
+
+    Subclasses implement ``_bind``. Listing binds too, so per-user policy
+    can filter ``tools/list`` in direct exposure mode. A listing without
+    credentials stays unbound instead of failing (``required=False``).
+    """
+
+    async def _bind(self, *, required: bool) -> None:
+        """Set the AYON client contextvars for the current request.
+
+        Args:
+            required: Raise when the request carries no credentials.
+
+        """
+        raise NotImplementedError
+
+    async def on_call_tool(
+        self,
+        context: MiddlewareContext[mcp_types.CallToolRequestParams],
+        call_next: CallNext[mcp_types.CallToolRequestParams, object],
+    ) -> ToolResult:
+        """Bind the caller's AYON client, then run the tool.
+
+        Args:
+            context: The middleware context for the current request.
+            call_next: The next middleware or tool handler to call.
+
+        Returns:
+            The result of the next middleware or tool handler.
+
+        """
+        await self._bind(required=True)
+        return await call_next(context)  # ty: ignore[invalid-return-type]
+
+    async def on_list_tools(
+        self,
+        context: MiddlewareContext[mcp_types.ListToolsRequest],
+        call_next: CallNext[mcp_types.ListToolsRequest, Sequence[Tool]],
+    ) -> Sequence[Tool]:
+        """Bind the caller's AYON client when known, then list tools.
+
+        Args:
+            context: The middleware context for the current request.
+            call_next: The next middleware or handler to call.
+
+        Returns:
+            The tools the next handler lists.
+
+        """
+        await self._bind(required=False)
+        return await call_next(context)
+
+
+class RemoteApiKeyMiddleware(_AuthMiddleware):
     """Resolve AYON API key from request headers for remote tool calls."""
 
     def __init__(self, base_url: str):
@@ -62,22 +120,14 @@ class RemoteApiKeyMiddleware(Middleware):
         """
         self._base_url = base_url
 
-    async def on_call_tool(
-        self,
-        context: MiddlewareContext[mcp_types.CallToolRequestParams],
-        call_next: CallNext[mcp_types.CallToolRequestParams, object],
-    ) -> ToolResult:
-        """Inject request-scoped AYON client based on ``x-api-key`` header.
+    async def _bind(self, *, required: bool) -> None:
+        """Bind a request-scoped AYON client from the ``x-api-key`` header.
 
         Args:
-            context: The middleware context for the current request.
-            call_next: The next middleware or tool handler to call.
-
-        Returns:
-            The result of the next middleware or tool handler.
+            required: Raise when the header is missing.
 
         Raises:
-            RuntimeError: If the ``x-api-key`` header is missing or empty.
+            RuntimeError: If required and ``x-api-key`` is missing or empty.
 
         """
         from .client import set_global_ayon_api_key, set_global_ayon_as_user
@@ -85,6 +135,8 @@ class RemoteApiKeyMiddleware(Middleware):
         headers = get_http_headers()
         request_api_key = (headers.get("x-api-key") or "").strip()
         if not request_api_key:
+            if not required:
+                return
             msg = (
                 "Missing required 'x-api-key' header in remote mode. "
                 "Provide a valid AYON API key with each MCP request."
@@ -98,10 +150,9 @@ class RemoteApiKeyMiddleware(Middleware):
         set_global_ayon_api_key(request_api_key)
         set_global_ayon_as_user(None)
         set_global_ayon_client(client)
-        return await call_next(context)  # ty: ignore[invalid-return-type]
 
 
-class ServiceUserMiddleware(Middleware):
+class ServiceUserMiddleware(_AuthMiddleware):
     """Act as the user the AYON server authenticated (tunnel mode).
 
     Behind the tunnel the AYON server has already authenticated the caller
@@ -148,22 +199,14 @@ class ServiceUserMiddleware(Middleware):
             self._clients.move_to_end(user_name)
         return client
 
-    async def on_call_tool(
-        self,
-        context: MiddlewareContext[mcp_types.CallToolRequestParams],
-        call_next: CallNext[mcp_types.CallToolRequestParams, object],
-    ) -> ToolResult:
-        """Inject an AYON client acting as the authenticated user.
+    async def _bind(self, *, required: bool) -> None:
+        """Bind an AYON client acting as the authenticated user.
 
         Args:
-            context: The middleware context for the current request.
-            call_next: The next middleware or tool handler to call.
-
-        Returns:
-            The result of the next middleware or tool handler.
+            required: Raise when the request carries no user name.
 
         Raises:
-            RuntimeError: If the request carries no user name.
+            RuntimeError: If required and the request has no user name.
 
         """
         from .client import set_global_ayon_api_key, set_global_ayon_as_user
@@ -173,6 +216,8 @@ class ServiceUserMiddleware(Middleware):
             get_http_headers(include_all=True).get(USER_HEADER) or ""
         ).strip()
         if not user_name:
+            if not required:
+                return
             msg = (
                 f"Missing '{USER_HEADER}' header. In tunnel mode requests "
                 "must come through the MCP addon's endpoint on the AYON "
@@ -183,10 +228,9 @@ class ServiceUserMiddleware(Middleware):
         set_global_ayon_api_key(self._api_key)
         set_global_ayon_as_user(user_name)
         set_global_ayon_client(await self._client_for(user_name))
-        return await call_next(context)  # ty: ignore[invalid-return-type]
 
 
-class StaticApiKeyMiddleware(Middleware):
+class StaticApiKeyMiddleware(_AuthMiddleware):
     """Use one configured AYON API key for local tool calls."""
 
     def __init__(self, base_url: str, api_key: str):
@@ -201,12 +245,88 @@ class StaticApiKeyMiddleware(Middleware):
         self._api_key = api_key
         self._client = None
 
+    async def _bind(self, *, required: bool) -> None:
+        """Bind the lazily initialized AYON client for local mode.
+
+        Args:
+            required: Unused; the configured key is always there.
+
+        """
+        from .client import set_global_ayon_api_key, set_global_ayon_as_user
+
+        if self._client is None:
+            self._client = await asyncio.to_thread(
+                get_ayon_api, self._base_url, self._api_key
+            )
+        set_global_ayon_api_key(self._api_key)
+        set_global_ayon_as_user(None)
+        set_global_ayon_client(self._client)
+
+
+class DirectPolicyMiddleware(Middleware):
+    """Apply each caller's MCP policy to directly exposed tools.
+
+    In ``direct`` exposure mode tools are registered with FastMCP as they
+    are, so calls never pass through ``AyonDynamicToolProvider``. This
+    middleware filters ``tools/list`` and refuses calls to hidden tools
+    with the same messages. It must run after the auth middleware, which
+    binds the caller. Guards and mutation confirmation stay discovery-mode
+    only.
+    """
+
+    def __init__(
+        self, tools: Iterable[AyonTool], policy_store: PolicyStore | None
+    ):
+        """Initialize the middleware.
+
+        Args:
+            tools: The registered tools, with policy metadata.
+            policy_store: Per-caller policy source; ``None`` applies the
+                env var policy to everyone.
+
+        """
+        self._tools = {tool.name: tool for tool in tools}
+        self._policy_store = policy_store
+
+    async def _policy(self) -> EffectivePolicy:
+        if self._policy_store is None:
+            policy = EffectivePolicy.from_env()
+        else:
+            policy = await self._policy_store.policy()
+        # For get_server_info's mcpPolicy.
+        set_current_policy(policy)
+        return policy
+
+    async def on_list_tools(
+        self,
+        context: MiddlewareContext[mcp_types.ListToolsRequest],
+        call_next: CallNext[mcp_types.ListToolsRequest, Sequence[Tool]],
+    ) -> Sequence[Tool]:
+        """List only the tools the caller's policy lets it see.
+
+        Args:
+            context: The middleware context for the current request.
+            call_next: The next middleware or handler to call.
+
+        Returns:
+            The visible tools.
+
+        """
+        policy = await self._policy()
+        listed = await call_next(context)
+        return [
+            tool
+            for tool in listed
+            if tool.name not in self._tools
+            or is_visible(self._tools[tool.name], policy)
+        ]
+
     async def on_call_tool(
         self,
         context: MiddlewareContext[mcp_types.CallToolRequestParams],
         call_next: CallNext[mcp_types.CallToolRequestParams, object],
     ) -> ToolResult:
-        """Inject a lazily initialized AYON client for local mode.
+        """Refuse a call to a tool the caller's policy hides.
 
         Args:
             context: The middleware context for the current request.
@@ -215,14 +335,16 @@ class StaticApiKeyMiddleware(Middleware):
         Returns:
             The result of the next middleware or tool handler.
 
-        """
-        from .client import set_global_ayon_api_key, set_global_ayon_as_user
+        Raises:
+            ToolError: If the caller's policy hides the tool.
 
-        if self._client is None:
-            self._client = get_ayon_api(self._base_url, self._api_key)
-        set_global_ayon_api_key(self._api_key)
-        set_global_ayon_as_user(None)
-        set_global_ayon_client(self._client)
+        """
+        policy = await self._policy()
+        tool = self._tools.get(context.message.name)
+        if tool is not None:
+            error = hidden_tool_error(tool, policy)
+            if error is not None:
+                raise ToolError(error)
         return await call_next(context)  # ty: ignore[invalid-return-type]
 
 
@@ -299,8 +421,8 @@ async def explain_policy(
 
     Mirrors the running service's configuration: curated and REST tools,
     plus addon tools in discovery exposure mode. The addon settings apply
-    only when the service would use them (``AYON_MCP_POLICY_SETTINGS`` on,
-    discovery exposure mode); otherwise the env var policy applies.
+    unless ``AYON_MCP_POLICY_SETTINGS`` is off; then the env var policy
+    applies.
 
     Args:
         base_url: AYON server URL.
@@ -315,7 +437,9 @@ async def explain_policy(
     from . import tools as tools_module
 
     discovery = tools_module.tool_exposure_mode() != "direct"
-    settings_used = discovery and policy_settings_enabled()
+    # Both exposure modes apply the settings (direct mode through
+    # DirectPolicyMiddleware).
+    settings_used = policy_settings_enabled()
     store = PolicyStore(base_url, api_key)
     identity = await store.identity_of(user_name)
     policy = EffectivePolicy.from_env()
@@ -361,12 +485,16 @@ async def explain_policy(
     }
 
 
-def create_mcp_server(base_url: str, api_key: str) -> FastMCP:
+def create_mcp_server(
+    base_url: str, api_key: str, auth: Middleware | None = None
+) -> FastMCP:
     """Create the MCP server with the given AYON server URL.
 
     Args:
         base_url: AYON server URL (e.g. http://localhost:5000)
         api_key: AYON API key used to fetch the OpenAPI spec.
+        auth: Middleware binding the caller's AYON client. Added first,
+            so the per-user policy middleware runs after it.
 
     Returns:
         FastMCP instance configured with the AYON OpenAPI spec.
@@ -422,10 +550,17 @@ def create_mcp_server(base_url: str, api_key: str) -> FastMCP:
     addon_catalog = _create_addon_catalog(
         base_url, api_key, tools_module.tool_exposure_mode()
     )
+    if auth is not None:
+        mcp.add_middleware(auth)
     if tools_module.tool_exposure_mode() == "direct":
-        # Per-user policy needs discovery mode; direct mode keeps the
-        # env var policy for everyone.
         register_tools(mcp, tools)
+        # Calls skip the discovery provider: filter per caller here.
+        mcp.add_middleware(
+            DirectPolicyMiddleware(
+                create_curated_tools(tools),
+                _create_policy_store(base_url, api_key),
+            )
+        )
     else:
         register_tools(
             mcp,
@@ -532,8 +667,8 @@ def create_remote_server(
     mcp = create_mcp_server(
         base_url,
         api_key=api_key,
+        auth=auth or RemoteApiKeyMiddleware(base_url),
     )
-    mcp.add_middleware(auth or RemoteApiKeyMiddleware(base_url))
     if os.getenv("AYON_MCP_OTEL_ENABLED", "false") == "true":
         mcp.add_middleware(TokenMetrics())
     return mcp
@@ -611,12 +746,10 @@ def run_local(base_url: str, api_key: str) -> FastMCP:
 
     """
     resolved_api_key = api_key or os.getenv("AYON_API_KEY", "")
-    mcp = create_mcp_server(base_url, api_key=resolved_api_key)
-    mcp.add_middleware(
-        StaticApiKeyMiddleware(
-            base_url,
-            resolved_api_key,
-        )
+    mcp = create_mcp_server(
+        base_url,
+        api_key=resolved_api_key,
+        auth=StaticApiKeyMiddleware(base_url, resolved_api_key),
     )
     mcp.add_middleware(TokenMetrics())
     mcp.run(show_banner=False)

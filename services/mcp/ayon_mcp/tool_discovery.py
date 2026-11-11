@@ -277,6 +277,53 @@ def _read_only_error(tool: AyonTool, policy: EffectivePolicy) -> str:
     return f"Tool '{tool.name}' changes AYON data and is blocked: {reason}."
 
 
+def is_visible(tool: AyonTool, policy: EffectivePolicy) -> bool:
+    """Return True if a caller with ``policy`` may see and call ``tool``."""
+    return policy.allows_tool(
+        tool.name,
+        tool.namespace,
+        tool.side_effect,
+        admin=tool.admin,
+        endpoint=tool.endpoint,
+    )
+
+
+def hidden_tool_error(
+    tool: AyonTool,
+    policy: EffectivePolicy,
+    *,
+    requested_name: str | None = None,
+) -> str | None:
+    """Return why a caller can't use a tool its policy hides.
+
+    A hidden admin or filtered tool looks exactly like an unknown one. A
+    write tool hidden only by read-only mode says so, so the model
+    explains the refusal instead of searching for a workaround. A tool
+    that would stay hidden without read-only mode (an admin or filtered
+    tool that also writes) still looks unknown, so its name is never
+    confirmed.
+
+    Args:
+        tool: The catalogued tool.
+        policy: The caller's policy.
+        requested_name: The name the caller used (an alias, maybe);
+            defaults to the tool's name.
+
+    Returns:
+        The error message, or ``None`` if the tool is visible.
+
+    """
+    if is_visible(tool, policy):
+        return None
+    if (
+        policy.read_only
+        and tool.requires_confirmation
+        and is_visible(tool, replace(policy, read_only=False))
+    ):
+        return _read_only_error(tool, policy)
+    return f"Tool '{requested_name or tool.name}' was not found."
+
+
 async def _invoke(
     function: Callable[..., Any], arguments: dict[str, Any]
 ) -> Any:  # ruff: ignore[any-type]
@@ -401,17 +448,6 @@ class AyonDynamicToolProvider(BaseDynamicToolProvider[AyonTool]):
             return EffectivePolicy.from_env()
         return await self._policy_store.policy()
 
-    @staticmethod
-    def _is_visible(tool: AyonTool, policy: EffectivePolicy) -> bool:
-        """Return True if the caller's policy lets it see ``tool``."""
-        return policy.allows_tool(
-            tool.name,
-            tool.namespace,
-            tool.side_effect,
-            admin=tool.admin,
-            endpoint=tool.endpoint,
-        )
-
     def _find_tool(self, tool_name: str) -> AyonTool | None:
         """Return a catalogued tool by exact name or alias."""
         tool = self._tools_by_name.get(tool_name)
@@ -435,15 +471,9 @@ class AyonDynamicToolProvider(BaseDynamicToolProvider[AyonTool]):
 
         """
         tool = self._find_tool(tool_name)
-        if tool is None or self._is_visible(tool, policy):
+        if tool is None:
             return None
-        if (
-            policy.read_only
-            and tool.requires_confirmation
-            and self._is_visible(tool, replace(policy, read_only=False))
-        ):
-            return _read_only_error(tool, policy)
-        return f"Tool '{tool_name}' was not found."
+        return hidden_tool_error(tool, policy, requested_name=tool_name)
 
     def _is_unknown(self, tool_name: str) -> bool:
         """Return True if ``tool_name`` may exist on the server only.
@@ -488,7 +518,7 @@ class AyonDynamicToolProvider(BaseDynamicToolProvider[AyonTool]):
         await self._sync_addon_tools()
         policy = await self._current_policy()
         return [
-            tool for tool in self._tools if self._is_visible(tool, policy)
+            tool for tool in self._tools if is_visible(tool, policy)
         ]
 
     async def get_tool_schema(self, tool_name: str) -> dict[str, Any]:

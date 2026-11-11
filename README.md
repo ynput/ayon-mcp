@@ -275,6 +275,33 @@ and output-size checks) before it reaches AYON. See
 | `AYON_MCP_GUARDS` | `default` | `default` - the standard chain. `strict` - also blocks destructive tools (e.g. `delete_entity`) regardless of `confirm_mutation`, and blocks an identical tool call after it failed 3 times. `off` (or `false`/`0`/`no`) - disables the guard chain entirely. |
 | `AYON_MCP_READ_ONLY` | `false` | When truthy, write/destructive tools are not registered at all (in both discovery and direct exposure mode) and are refused if called. Enforced even with `AYON_MCP_GUARDS=off`. |
 | `AYON_MCP_ADMIN_TOOLS` | `false` | When truthy, registers REST tools for admin/security endpoints (secrets, API keys, auth/sessions, user and access management, `/api/system/*`, services, addon/installer uploads). Hidden by default, reads included. |
+| `AYON_MCP_POLICY_SETTINGS` | `true` | Read the per-user policy from the MCP addon's settings (see below). `false` gives every caller the env var policy. |
+
+#### Per-user policy
+
+The three variables above set the service-wide ceiling: the most permissive
+policy any caller can get. The MCP addon's studio settings (*AYON MCP server*)
+can narrow it per caller:
+
+- **Rules** match callers by user name, user level (admin, manager, user,
+  guest, service) or default access group. Each rule sets guards,
+  read-only and admin tools to *Inherit* or a value.
+- Every enabled rule matching the caller applies, and the strictest value
+  of each setting wins. A rule can turn read-only on but not off, hide
+  admin tools but not show them when the service hides them, and set
+  guards stricter but not looser than `AYON_MCP_GUARDS`.
+- The **default policy** applies to callers no rule matches.
+- Empty settings leave the env vars in charge. To show admin tools to some
+  users only, run the service with `AYON_MCP_ADMIN_TOOLS=true` and turn
+  them off in the default policy and the other users' rules.
+
+Callers only see the tools their policy allows; calling a write tool in
+read-only mode is refused with the reason. The service reads the settings
+with its own API key, from the MCP addon of the bundle of
+`AYON_MCP_ADDON_VARIANT` (default `production`), and caches them and each
+caller's user record for *Policy refresh* seconds. Per-user policy needs
+the default `discovery` exposure mode; `direct` mode keeps the env var
+policy for everyone.
 
 Generated REST tools are classified by HTTP method (`GET` read-only,
 `POST`/`PUT`/`PATCH` write, `DELETE` destructive), with a reviewed override

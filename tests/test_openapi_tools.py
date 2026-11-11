@@ -469,6 +469,8 @@ async def test_call_headers_do_not_outlive_the_call(
 @pytest.fixture
 def provider(tracked_tools, monkeypatch) -> AyonDynamicToolProvider:
     monkeypatch.delenv("AYON_MCP_READ_ONLY", raising=False)
+    # Admin tools are hidden unless the env enables them.
+    monkeypatch.setenv("AYON_MCP_ADMIN_TOOLS", "true")
     return AyonDynamicToolProvider(
         create_curated_tools(list(tracked_tools.values()))
     )

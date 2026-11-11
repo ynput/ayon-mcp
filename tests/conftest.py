@@ -49,6 +49,15 @@ def _no_rest_tools_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("AYON_MCP_ENABLE_OPENAPI_TOOLS", "false")
 
 
+@pytest.fixture(autouse=True)
+def _no_policy_settings_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Don't read the MCP addon's policy settings for every created server.
+
+    ``tests/test_policy.py`` enables them where it needs them.
+    """
+    monkeypatch.setenv("AYON_MCP_POLICY_SETTINGS", "false")
+
+
 @pytest.fixture(scope="session")
 def ollama_host() -> str:
     """Return the configured Ollama base URL."""

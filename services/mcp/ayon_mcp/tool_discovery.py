@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import inspect
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any
 
 from chuk_tool_processor.discovery import (
@@ -22,10 +22,12 @@ from fastmcp.tools.function_tool import FunctionTool
 from .addon_tools import call_addon_tool
 from .guardrails import (
     DESTRUCTIVE_TOOL_NAMES,
+    GuardsMode,
     build_guard_chain,
     read_only_enabled,
 )
 from .openapi_tools import rest_tool_of
+from .policy import EffectivePolicy
 from .rest_policy import endpoint_of, is_admin, side_effect_for
 
 if TYPE_CHECKING:
@@ -34,6 +36,7 @@ if TYPE_CHECKING:
     from chuk_tool_processor.guards import GuardChain
 
     from .addon_discovery import AddonCatalog, AddonTool
+    from .policy import PolicyStore
     from .rest_client import RestApiClient
 
 
@@ -64,6 +67,8 @@ class AyonTool:
     parameters: dict[str, Any]
     function: Callable[..., Any]
     side_effect: SideEffectClass = SideEffectClass.READ_ONLY
+    # Calls an admin/security REST endpoint (``rest_policy.is_admin``).
+    admin: bool = False
 
     @property
     def requires_confirmation(self) -> bool:
@@ -105,6 +110,11 @@ def tool_side_effect(function: Callable[..., Any]) -> SideEffectClass:
     return SideEffectClass.READ_ONLY
 
 
+def _is_admin_tool(function: Callable[..., Any]) -> bool:
+    endpoint = endpoint_of(function)
+    return endpoint is not None and is_admin(*endpoint)
+
+
 def _requires_confirmation(function: Callable[..., Any]) -> bool:
     return tool_side_effect(function) is not SideEffectClass.READ_ONLY
 
@@ -134,9 +144,7 @@ def drop_admin_tools(
 
     """
     return [
-        function for function in functions
-        if (endpoint := endpoint_of(function)) is None
-        or not is_admin(*endpoint)
+        function for function in functions if not _is_admin_tool(function)
     ]
 
 
@@ -162,6 +170,7 @@ def create_curated_tools(
                     parameters=rest_tool.parameters,
                     function=function,
                     side_effect=tool_side_effect(function),
+                    admin=_is_admin_tool(function),
                 )
             )
             continue
@@ -175,6 +184,7 @@ def create_curated_tools(
                 parameters=fastmcp_tool.parameters,
                 function=function,
                 side_effect=tool_side_effect(function),
+                admin=_is_admin_tool(function),
             )
         )
     return tools
@@ -244,6 +254,25 @@ def create_addon_ayon_tools(
     return tools
 
 
+def _retry_guard_of(chain: GuardChain) -> RetrySafetyGuard | None:
+    guard = chain.get("retry_safety")
+    return guard if isinstance(guard, RetrySafetyGuard) else None
+
+
+def _read_only_error(tool: AyonTool, policy: EffectivePolicy) -> str:
+    """Return the refusal for a write tool in read-only mode.
+
+    Returns:
+        The message, naming the rules or the env var that set read-only.
+
+    """
+    if policy.matched_rules or not read_only_enabled():
+        reason = f"read-only for this user by {policy.describe()}"
+    else:
+        reason = "the server runs in read-only mode (AYON_MCP_READ_ONLY)"
+    return f"Tool '{tool.name}' changes AYON data and is blocked: {reason}."
+
+
 async def _invoke(
     function: Callable[..., Any], arguments: dict[str, Any]
 ) -> Any:  # ruff: ignore[any-type]
@@ -275,6 +304,7 @@ class AyonDynamicToolProvider(BaseDynamicToolProvider[AyonTool]):
         tools: list[AyonTool],
         guard_chain: GuardChain | object | None = _DEFAULT,
         addon_catalog: AddonCatalog | None = None,
+        policy_store: PolicyStore | None = None,
     ) -> None:
         """Initialize the provider with its available AYON tools.
 
@@ -289,14 +319,25 @@ class AyonDynamicToolProvider(BaseDynamicToolProvider[AyonTool]):
             addon_catalog: Source of addon tools. Its tools are appended
                 to ``tools`` and re-read whenever the catalog reports a
                 bundle change, so the catalog follows addon updates.
+            policy_store: Source of the per-caller policy (addon
+                settings). Without it every caller gets the env var
+                policy.
 
         """
         super().__init__()
         self._base_tools = tools
         self._addon_catalog = addon_catalog
         self._addon_generation = -1
-        self._read_only = read_only_enabled()
+        self._policy_store = policy_store
         self._explicit_guard_chain = guard_chain
+        # One guard chain per (guards, read_only) a caller's policy asks
+        # for; a ``None`` value means guards off.
+        self._guard_chains: dict[
+            tuple[GuardsMode, bool], GuardChain | None
+        ] = {}
+        # Shared by every strict chain and kept across catalog rebuilds,
+        # so retry history survives both.
+        self._retry_guard: RetrySafetyGuard | None = None
         self._set_tools(self._combined_tools())
 
     def _combined_tools(self) -> list[AyonTool]:
@@ -312,36 +353,89 @@ class AyonDynamicToolProvider(BaseDynamicToolProvider[AyonTool]):
         ]
 
     def _set_tools(self, tools: list[AyonTool]) -> None:
-        """Replace the catalog and rebuild everything derived from it.
-
-        The retry guard is stateful and not tied to the tool list, so a
-        rebuilt chain keeps the previous one and its retry history.
-        """
+        """Replace the catalog and drop everything derived from it."""
         self._tools = tools
         self._tools_by_name = {tool.name: tool for tool in tools}
-        previous_retry_guard = getattr(self, "_retry_guard", None)
-        self._guard_chain = (
-            build_guard_chain(tools)
-            if self._explicit_guard_chain is _DEFAULT
-            else self._explicit_guard_chain
-        )
-        retry_guard = (
-            self._guard_chain.get("retry_safety")
-            if self._guard_chain is not None
-            else None
-        )
-        if (
-            isinstance(retry_guard, RetrySafetyGuard)
-            and previous_retry_guard is not None
-            and retry_guard is not previous_retry_guard
-        ):
-            self._guard_chain.remove("retry_safety")
-            self._guard_chain.add("retry_safety", previous_retry_guard)
-            retry_guard = previous_retry_guard
-        self._retry_guard = (
-            retry_guard if isinstance(retry_guard, RetrySafetyGuard) else None
-        )
+        self._guard_chains.clear()
         self.invalidate_cache()
+
+    def _chain_for(self, policy: EffectivePolicy) -> GuardChain | None:
+        """Return the guard chain for a caller's policy, built once.
+
+        Returns:
+            The explicitly passed chain if there is one, otherwise the
+            chain for the policy's guard profile and read-only mode.
+
+        """
+        if self._explicit_guard_chain is not _DEFAULT:
+            return self._explicit_guard_chain  # ty: ignore[invalid-return-type]
+        key = (policy.guards, policy.read_only)
+        if key in self._guard_chains:
+            return self._guard_chains[key]
+        chain = build_guard_chain(
+            self._tools, policy.guards, read_only=policy.read_only
+        )
+        retry_guard = chain.get("retry_safety") if chain is not None else None
+        if chain is not None and isinstance(retry_guard, RetrySafetyGuard):
+            if self._retry_guard is None:
+                self._retry_guard = retry_guard
+            else:
+                chain.remove("retry_safety")
+                chain.add("retry_safety", self._retry_guard)
+        self._guard_chains[key] = chain
+        return chain
+
+    async def _current_policy(self) -> EffectivePolicy:
+        """Return the policy of the caller of the current tool call.
+
+        Returns:
+            The addon settings' policy for the caller, or the env var
+            policy without a policy store.
+
+        """
+        if self._policy_store is None:
+            return EffectivePolicy.from_env()
+        return await self._policy_store.policy()
+
+    @staticmethod
+    def _is_visible(tool: AyonTool, policy: EffectivePolicy) -> bool:
+        """Return True if the caller's policy lets it see ``tool``."""
+        if tool.admin and not policy.admin_tools:
+            return False
+        return not (policy.read_only and tool.requires_confirmation)
+
+    def _find_tool(self, tool_name: str) -> AyonTool | None:
+        """Return a catalogued tool by exact name or alias."""
+        tool = self._tools_by_name.get(tool_name)
+        if tool is None:
+            tool = find_tool_by_alias(tool_name, self._tools)
+        return tool
+
+    def _access_error(
+        self, tool_name: str, policy: EffectivePolicy
+    ) -> str | None:
+        """Return why the caller can't use a tool hidden by its policy.
+
+        A hidden admin tool looks exactly like an unknown one. A write
+        tool hidden only by read-only mode says so, so the model explains
+        the refusal instead of searching for a workaround. A tool that
+        would stay hidden without read-only mode (an admin tool that also
+        writes) still looks unknown, so its name is never confirmed.
+
+        Returns:
+            The error message, or ``None`` if the tool is not hidden.
+
+        """
+        tool = self._find_tool(tool_name)
+        if tool is None or self._is_visible(tool, policy):
+            return None
+        if (
+            policy.read_only
+            and tool.requires_confirmation
+            and self._is_visible(tool, replace(policy, read_only=False))
+        ):
+            return _read_only_error(tool, policy)
+        return f"Tool '{tool_name}' was not found."
 
     def _is_unknown(self, tool_name: str) -> bool:
         """Return True if ``tool_name`` may exist on the server only.
@@ -375,12 +469,19 @@ class AyonDynamicToolProvider(BaseDynamicToolProvider[AyonTool]):
     async def get_all_tools(self) -> list[AyonTool]:
         """Return every catalogued AYON tool.
 
+        Only the tools the current caller's policy lets it see, so list,
+        search and alias resolution of the base class never reveal hidden
+        tools.
+
         Returns:
             The discovery catalog, refreshed after addon changes.
 
         """
         await self._sync_addon_tools()
-        return self._tools
+        policy = await self._current_policy()
+        return [
+            tool for tool in self._tools if self._is_visible(tool, policy)
+        ]
 
     async def get_tool_schema(self, tool_name: str) -> dict[str, Any]:
         """Return the schema and mutation confirmation requirement.
@@ -399,6 +500,13 @@ class AyonDynamicToolProvider(BaseDynamicToolProvider[AyonTool]):
         # Before the base class answers from its schema cache, which
         # _set_tools clears when the addon tools changed.
         await self._sync_addon_tools(force=self._is_unknown(tool_name))
+        # The schema cache is shared by all callers: check this caller's
+        # access before it can answer.
+        access_error = self._access_error(
+            tool_name, await self._current_policy()
+        )
+        if access_error is not None:
+            return {"success": False, "error": access_error}
         schema = await super().get_tool_schema(tool_name)
         tool = self._tools_by_name.get(
             schema.get("function", {}).get("name", tool_name)
@@ -439,21 +547,23 @@ class AyonDynamicToolProvider(BaseDynamicToolProvider[AyonTool]):
         return schema
 
     def _policy_error(
-        self, tool: AyonTool, *, confirmed: object
+        self,
+        tool: AyonTool,
+        policy: EffectivePolicy,
+        *,
+        confirmed: object,
     ) -> str | None:
-        """Return why a mutating call is refused, independent of guards.
+        """Return why a call is refused, independent of guards.
 
         Returns:
             The refusal message, or ``None`` when the call may proceed.
 
         """
+        access_error = self._access_error(tool.name, policy)
+        if access_error is not None:
+            return access_error
         if not tool.requires_confirmation:
             return None
-        if self._read_only:
-            return (
-                f"Tool '{tool.name}' changes AYON data and is blocked: "
-                "the server runs in read-only mode (AYON_MCP_READ_ONLY)."
-            )
         if confirmed is not True:
             return (
                 f"Tool '{tool.name}' changes AYON data. Set "
@@ -461,10 +571,11 @@ class AyonDynamicToolProvider(BaseDynamicToolProvider[AyonTool]):
             )
         return None
 
+    @staticmethod
     async def _run_tool(
-        self,
         tool: AyonTool,
         arguments: dict[str, Any],
+        retry_guard: RetrySafetyGuard | None = None,
     ) -> tuple[bool, Any]:
         """Call the tool function, recording the attempt for retry safety.
 
@@ -476,15 +587,36 @@ class AyonDynamicToolProvider(BaseDynamicToolProvider[AyonTool]):
         try:
             result = await _invoke(tool.function, arguments)
         except Exception as exc:  # ruff: ignore[blind-except]
-            if self._retry_guard is not None:
-                self._retry_guard.record_attempt(
+            if retry_guard is not None:
+                retry_guard.record_attempt(
                     tool.name, arguments, ErrorClass.UNKNOWN
                 )
             return False, str(exc)
 
-        if self._retry_guard is not None:
-            self._retry_guard.record_success(tool.name, arguments)
+        if retry_guard is not None:
+            retry_guard.record_success(tool.name, arguments)
         return True, result
+
+    async def call_tool(
+        self, tool_name: str, arguments: dict[str, Any]
+    ) -> dict[str, Any]:
+        """Execute a tool by name or alias, after the caller's access check.
+
+        The base class would answer a hidden tool with a generic "not
+        found"; a write tool hidden by read-only mode says why instead.
+
+        Returns:
+            The tool's result or an error.
+
+        """
+        if self._is_unknown(tool_name):
+            await self._sync_addon_tools(force=True)
+        access_error = self._access_error(
+            tool_name, await self._current_policy()
+        )
+        if access_error is not None:
+            return {"success": False, "error": access_error}
+        return await super().call_tool(tool_name, arguments)
 
     async def execute_tool(
         self,
@@ -508,25 +640,28 @@ class AyonDynamicToolProvider(BaseDynamicToolProvider[AyonTool]):
 
         arguments = dict(arguments)
         confirmed = arguments.pop("confirm_mutation", False)
-        policy_error = self._policy_error(tool, confirmed=confirmed)
+        policy = await self._current_policy()
+        policy_error = self._policy_error(tool, policy, confirmed=confirmed)
         if policy_error is not None:
             return {"success": False, "error": policy_error}
 
-        if self._guard_chain is not None:
-            guard_result = await self._guard_chain.check_all_async(
+        guard_chain = self._chain_for(policy)
+        retry_guard = None
+        if guard_chain is not None:
+            guard_result = await guard_chain.check_all_async(
                 tool_name, arguments
             )
             if guard_result.blocked:
                 return {"success": False, "error": guard_result.final_reason}
-            if guard_result.repaired_args is not None:
-                arguments = guard_result.repaired_args
+            arguments = guard_result.repaired_args or arguments
+            retry_guard = _retry_guard_of(guard_chain)
 
-        succeeded, result = await self._run_tool(tool, arguments)
+        succeeded, result = await self._run_tool(tool, arguments, retry_guard)
         if not succeeded:
             return {"success": False, "error": result}
 
-        if self._guard_chain is not None:
-            output_check = self._guard_chain.check_output_all(
+        if guard_chain is not None:
+            output_check = guard_chain.check_output_all(
                 tool_name, arguments, result
             )
             if output_check.blocked:
@@ -538,19 +673,23 @@ class AyonDynamicToolProvider(BaseDynamicToolProvider[AyonTool]):
 def create_discovery_tools(
     functions: list[Callable[..., Any]],
     addon_catalog: AddonCatalog | None = None,
+    policy_store: PolicyStore | None = None,
 ) -> list[Callable[..., Any]]:
     """Create the fixed MCP surface for discovering AYON tools on demand.
 
     Args:
         functions: Curated FastMCP-compatible tool functions.
         addon_catalog: Tools discovered from AYON addons, if enabled.
+        policy_store: Per-caller policy from the addon settings.
 
     Returns:
         The five callable MCP discovery tools.
 
     """
     provider = AyonDynamicToolProvider(
-        create_curated_tools(functions), addon_catalog=addon_catalog
+        create_curated_tools(functions),
+        addon_catalog=addon_catalog,
+        policy_store=policy_store,
     )
 
     async def list_ayon_tools(limit: int = 50) -> dict[str, Any]:

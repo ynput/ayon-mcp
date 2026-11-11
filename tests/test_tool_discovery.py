@@ -21,11 +21,12 @@ def delete_entity(entity_id: str) -> dict[str, str]:
 
 
 async def update_openapi_entity(entity_id: str) -> dict[str, str]:
-    """Update an entity.
-
-    Endpoint: PATCH /api/entities/{entity_id}
-    """
+    """Update an entity."""
     return {"id": entity_id}
+
+
+update_openapi_entity.__ayon_http_method__ = "PATCH"
+update_openapi_entity.__ayon_http_path__ = "/api/entities/{entity_id}"
 
 
 @pytest.mark.asyncio

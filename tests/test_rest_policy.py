@@ -1,4 +1,4 @@
-"""Tests for side-effect and admin classification of generated REST tools."""
+"""Tests for side-effect and admin classification of REST tools."""
 
 from __future__ import annotations
 
@@ -9,9 +9,9 @@ import pytest
 from chuk_tool_processor.guards import SideEffectClass
 
 from ayon_mcp import rest_policy
-from ayon_mcp.openapi_codegen import HTTP_METHODS
 from ayon_mcp.rest_policy import (
     ADMIN_PATTERNS,
+    HTTP_METHODS,
     SIDE_EFFECT_OVERRIDES,
     endpoint_of,
     is_admin,
@@ -23,8 +23,6 @@ from ayon_mcp.tool_discovery import (
     drop_admin_tools,
     tool_side_effect,
 )
-
-from conftest import requires_generated_tools
 
 SPEC_PATH = (
     Path(__file__).parent.parent / "services" / "mcp" / "ayon_openapi.json"
@@ -117,6 +115,7 @@ def test_every_admin_pattern_matches_an_operation_in_the_spec() -> None:
         ("PUT", "/api/accessGroups/{access_group_name}/{project_name}", True),
         ("DELETE", "/api/addons/{addon_name}/{addon_version}", True),
         ("DELETE", "/api/addons/{addon_name}/{addon_version}/overrides", False),
+        ("POST", "/api/addons/{addon_name}/migrate", True),
         ("GET", "/api/projects/{project_name}", False),
     ],
 )
@@ -124,17 +123,8 @@ def test_is_admin(method: str, path: str, expected: bool) -> None:
     assert is_admin(method, path) is expected
 
 
-def test_endpoint_of_reads_attributes_and_legacy_docstring() -> None:
+def test_endpoint_of_reads_attributes() -> None:
     assert endpoint_of(_rest_tool("delete", "/api/x")) == ("DELETE", "/api/x")
-
-    def legacy() -> None:
-        """Legacy.
-
-Endpoint: PATCH /api/y/{id}
-
-More text."""
-
-    assert endpoint_of(legacy) == ("PATCH", "/api/y/{id}")
 
     def curated() -> None:
         """Curated tool without an endpoint."""
@@ -187,17 +177,3 @@ async def test_strict_mode_blocks_rest_delete(
 
     assert result["success"] is False
 
-
-@requires_generated_tools
-def test_every_generated_tool_carries_its_endpoint() -> None:
-    from ayon_mcp.tools.openapi_generated import ALL_OPENAPI_TOOLS
-
-    missing = [
-        tool.__name__
-        for tool in ALL_OPENAPI_TOOLS
-        if getattr(tool, rest_policy.HTTP_METHOD_ATTR, None) is None
-    ]
-    assert not missing, (
-        "generated tools without @endpoint - regenerate them: "
-        f"{missing[:5]}"
-    )

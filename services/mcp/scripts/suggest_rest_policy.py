@@ -35,8 +35,8 @@ from pathlib import Path
 from typing import Any
 
 import httpx
-from ayon_mcp.openapi_codegen import HTTP_METHODS
 from ayon_mcp.rest_policy import (
+    HTTP_METHODS,
     SIDE_EFFECT_OVERRIDES,
     SIDE_EFFECT_RANK,
     is_admin,

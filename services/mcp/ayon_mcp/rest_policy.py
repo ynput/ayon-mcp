@@ -1,14 +1,13 @@
-"""Side-effect and admin classification for generated OpenAPI REST tools.
+"""Side-effect and admin classification for OpenAPI REST tools.
 
-Generated tools (``tools/openapi_generated``) wrap one AYON REST operation
-each. Their side effect is derived from the HTTP method, with a reviewed
-override table for operations where the method lies about the effect (a
-POST that only reads, a POST that restarts the server, ...). A separate set
-of path patterns marks admin/security endpoints, which are not registered
-at all unless ``AYON_MCP_ADMIN_TOOLS`` is truthy.
+REST tools (``openapi_tools``) wrap one AYON REST operation each. Their side
+effect is derived from the HTTP method, with a reviewed override table for
+operations where the method lies about the effect (a POST that only reads, a
+POST that restarts the server, ...). A separate set of path patterns marks
+admin/security endpoints, which are not registered at all unless
+``AYON_MCP_ADMIN_TOOLS`` is truthy.
 
-This module lives outside ``openapi_generated/`` so regenerating the tools
-never touches it. Every override and admin pattern must match a path in
+Every override and admin pattern must match a path in the tracked
 ``ayon_openapi.json`` - ``tests/test_rest_policy.py`` enforces that, so a
 renamed endpoint fails loudly instead of silently losing its override.
 
@@ -18,7 +17,6 @@ its output is a suggestion for review, never read at runtime.
 
 from __future__ import annotations
 
-import inspect
 import os
 import re
 from typing import TYPE_CHECKING, Any
@@ -33,11 +31,10 @@ TRUTHY_VALUES = frozenset({"1", "true", "yes", "on"})
 HTTP_METHOD_ATTR = "__ayon_http_method__"
 HTTP_PATH_ATTR = "__ayon_http_path__"
 
-# Matches the docstring line written by older codegen versions, for
-# generated modules that predate the explicit attributes above.
-_DOCSTRING_ENDPOINT_RE = re.compile(
-    r"^Endpoint: (?P<method>[A-Z]+) (?P<path>\S+)$", re.MULTILINE
-)
+# Lower-case keys of an OpenAPI path item that are operations.
+HTTP_METHODS = frozenset({
+    "get", "post", "put", "patch", "delete", "options", "head"
+})
 
 # Strictness order, used to compare classifications.
 SIDE_EFFECT_RANK: dict[SideEffectClass, int] = {
@@ -64,7 +61,6 @@ SIDE_EFFECT_OVERRIDES: dict[tuple[str, str], SideEffectClass] = {
     ("POST", "/api/resolve"): SideEffectClass.READ_ONLY,
     ("POST", "/api/actions/list"): SideEffectClass.READ_ONLY,
     ("POST", "/api/bundles/check"): SideEffectClass.READ_ONLY,
-    ("POST", "/api/csv/export/{entity_type}"): SideEffectClass.READ_ONLY,
     (
         "POST",
         "/api/projects/{project_name}/folders/search",
@@ -134,6 +130,7 @@ ADMIN_PATTERNS: tuple[AdminPattern, ...] = tuple(
             frozenset({"DELETE"}),
             r"^/api/addons/\{addon_name\}(/\{addon_version\})?$",
         ),
+        (_WRITES, r"^/api/addons/\{addon_name\}/migrate$"),
         (_WRITES, r"^/api/desktop/(installers|dependencyPackages)(/|$)"),
     )
 )
@@ -181,11 +178,7 @@ def is_admin(method: str, path: str) -> bool:
 
 
 def endpoint_of(function: Callable[..., Any]) -> tuple[str, str] | None:
-    """Return the ``(METHOD, path)`` a generated REST tool calls.
-
-    Reads the attributes set by the ``endpoint`` decorator in generated
-    code, falling back to the ``Endpoint:`` docstring line written by older
-    codegen versions.
+    """Return the ``(METHOD, path)`` a REST tool calls.
 
     Returns:
         The endpoint, or ``None`` if ``function`` is not a REST tool.
@@ -195,7 +188,4 @@ def endpoint_of(function: Callable[..., Any]) -> tuple[str, str] | None:
     path = getattr(function, HTTP_PATH_ATTR, None)
     if isinstance(method, str) and isinstance(path, str):
         return method.upper(), path
-    match = _DOCSTRING_ENDPOINT_RE.search(inspect.getdoc(function) or "")
-    if match is None:
-        return None
-    return match["method"], match["path"]
+    return None

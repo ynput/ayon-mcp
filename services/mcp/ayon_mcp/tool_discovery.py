@@ -27,7 +27,7 @@ from .guardrails import (
     read_only_enabled,
 )
 from .openapi_tools import rest_tool_of
-from .policy import EffectivePolicy
+from .policy import EffectivePolicy, set_current_policy
 from .rest_policy import endpoint_of, is_admin, side_effect_for
 
 if TYPE_CHECKING:
@@ -69,6 +69,8 @@ class AyonTool:
     side_effect: SideEffectClass = SideEffectClass.READ_ONLY
     # Calls an admin/security REST endpoint (``rest_policy.is_admin``).
     admin: bool = False
+    # ``(METHOD, path)`` of a REST tool, ``None`` for any other tool.
+    endpoint: tuple[str, str] | None = None
 
     @property
     def requires_confirmation(self) -> bool:
@@ -171,6 +173,7 @@ def create_curated_tools(
                     function=function,
                     side_effect=tool_side_effect(function),
                     admin=_is_admin_tool(function),
+                    endpoint=endpoint_of(function),
                 )
             )
             continue
@@ -185,6 +188,7 @@ def create_curated_tools(
                 function=function,
                 side_effect=tool_side_effect(function),
                 admin=_is_admin_tool(function),
+                endpoint=endpoint_of(function),
             )
         )
     return tools
@@ -400,9 +404,13 @@ class AyonDynamicToolProvider(BaseDynamicToolProvider[AyonTool]):
     @staticmethod
     def _is_visible(tool: AyonTool, policy: EffectivePolicy) -> bool:
         """Return True if the caller's policy lets it see ``tool``."""
-        if tool.admin and not policy.admin_tools:
-            return False
-        return not (policy.read_only and tool.requires_confirmation)
+        return policy.allows_tool(
+            tool.name,
+            tool.namespace,
+            tool.side_effect,
+            admin=tool.admin,
+            endpoint=tool.endpoint,
+        )
 
     def _find_tool(self, tool_name: str) -> AyonTool | None:
         """Return a catalogued tool by exact name or alias."""
@@ -656,6 +664,8 @@ class AyonDynamicToolProvider(BaseDynamicToolProvider[AyonTool]):
             arguments = guard_result.repaired_args or arguments
             retry_guard = _retry_guard_of(guard_chain)
 
+        # Copied into the worker thread with the other contextvars.
+        set_current_policy(policy)
         succeeded, result = await self._run_tool(tool, arguments, retry_guard)
         if not succeeded:
             return {"success": False, "error": result}

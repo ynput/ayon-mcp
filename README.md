@@ -285,9 +285,21 @@ can narrow it per caller:
 
 - **Rules** match callers by user name, user level (admin, manager, user,
   guest, service) or default access group. Each rule sets guards,
-  read-only and admin tools to *Inherit* or a value.
-- Every enabled rule matching the caller applies, and the strictest value
-  of each setting wins. A rule can turn read-only on but not off, hide
+  read-only and admin tools to *Inherit* or a value, and can filter
+  tools:
+  - *Curated and addon tools*: an allowlist or denylist of patterns.
+  - *REST tools*: turn them off, cap their side effect (e.g. only REST
+    reads while curated write tools stay), and an allowlist or denylist.
+
+  A pattern matches a tool's name (`set_*`), namespace
+  (`ayon.addon.shotgrid`), qualified name (`ayon.entities.*`) or, for REST
+  tools, its endpoint (`GET /api/projects/*`). Patterns are
+  case-sensitive globs; prefix one with `re:` for a regex matched against
+  the whole value (`re:^(get|list)_.*`). An allowlist without patterns
+  allows no tool.
+- Every enabled rule matching the caller applies, the strictest value
+  of each setting wins, and a tool must pass every matching rule's
+  filter. A rule can turn read-only on but not off, hide
   admin tools but not show them when the service hides them, and set
   guards stricter but not looser than `AYON_MCP_GUARDS`.
 - The **default policy** applies to callers no rule matches.
@@ -296,7 +308,10 @@ can narrow it per caller:
   them off in the default policy and the other users' rules.
 
 Callers only see the tools their policy allows; calling a write tool in
-read-only mode is refused with the reason. The service reads the settings
+read-only mode is refused with the reason. `get_server_info` reports the
+caller's policy (`mcpPolicy`), and
+`ayon-mcp --explain-policy <user>` prints any user's policy and visible
+tools (needs an admin or service API key). The service reads the settings
 with its own API key, from the MCP addon of the bundle of
 `AYON_MCP_ADDON_VARIANT` (default `production`), and caches them and each
 caller's user record for *Policy refresh* seconds. Per-user policy needs

@@ -6,6 +6,8 @@ service-wide env var policy (``AYON_MCP_GUARDS``, ``AYON_MCP_READ_ONLY``,
 policy stricter than the env vars, never looser. See
 ``docs/design/per-user-policy.md``.
 """
+import fnmatch
+import re
 from typing import Any
 
 from ayon_server.enum import EnumItem
@@ -18,6 +20,15 @@ from ayon_server.settings import (
 from pydantic import field_validator
 
 INHERIT = "inherit"
+REGEX_PREFIX = "re:"
+
+PATTERNS_DESCRIPTION = (
+    "Matched against the tool name, its namespace (e.g. ayon.entities, "
+    "ayon.addon.shotgrid, ayon.openapi.projects) and its qualified name "
+    "(<namespace>.<name>); REST tools also against 'METHOD /path'. Globs "
+    "by default (set_*, ayon.entities.*, GET /api/projects/*); prefix with "
+    "re: for a regex matched against the whole value (re:^(get|list)_.*)."
+)
 
 
 def _switch_enum() -> list[dict[str, str]]:
@@ -35,6 +46,45 @@ def _guards_enum() -> list[dict[str, str]]:
         {"value": "default", "label": "Default"},
         {"value": "strict", "label": "Strict"},
     ]
+
+
+def _filter_mode_enum() -> list[dict[str, str]]:
+    return [
+        {"value": "all", "label": "All tools"},
+        {"value": "allowlist", "label": "Only matching (allowlist)"},
+        {"value": "denylist", "label": "All except matching (denylist)"},
+    ]
+
+
+def _side_effect_enum() -> list[dict[str, str]]:
+    return [
+        {"value": INHERIT, "label": "Inherit"},
+        {"value": "read_only", "label": "Read-only"},
+        {"value": "write", "label": "Write"},
+        {"value": "destructive", "label": "Destructive"},
+    ]
+
+
+def validate_patterns(patterns: list[str]) -> list[str]:
+    """Reject patterns the MCP service can't compile.
+
+    Returns:
+        The patterns, unchanged.
+
+    Raises:
+        ValueError: If a ``re:`` pattern is not a valid regex.
+
+    """
+    for pattern in patterns:
+        try:
+            if pattern.startswith(REGEX_PREFIX):
+                re.compile(pattern[len(REGEX_PREFIX):])
+            else:
+                re.compile(fnmatch.translate(pattern))
+        except re.error as exc:
+            msg = f"Invalid pattern {pattern!r}: {exc}"
+            raise ValueError(msg) from exc
+    return patterns
 
 
 def _user_levels_enum() -> list[dict[str, str]]:
@@ -69,6 +119,59 @@ async def _access_groups_enum() -> list[EnumItem]:
         "SELECT name FROM public.access_groups ORDER BY name"
     )
     return [EnumItem(value=row["name"], label=row["name"]) for row in rows]
+
+
+class ToolFilterModel(BaseSettingsModel):
+    """Which curated and addon tools the callers may use."""
+
+    mode: str = SettingsField(
+        "all",
+        title="Mode",
+        enum_resolver=_filter_mode_enum,
+        description=(
+            "Every matching rule's filter applies: a tool must pass all of "
+            "them. An allowlist without patterns allows no tool."
+        ),
+    )
+    patterns: list[str] = SettingsField(
+        default_factory=list,
+        title="Patterns",
+        description=PATTERNS_DESCRIPTION,
+    )
+
+    @field_validator("patterns")
+    @classmethod
+    def validate_patterns(cls, value: list[str]) -> list[str]:
+        """Reject invalid patterns.
+
+        Returns:
+            The patterns, unchanged.
+
+        """
+        return validate_patterns(value)
+
+
+class OpenApiFilterModel(ToolFilterModel):
+    """Which REST tools (generated from the OpenAPI spec) callers may use."""
+
+    rest_tools: str = SettingsField(
+        INHERIT,
+        title="REST tools",
+        enum_resolver=_switch_enum,
+        description=(
+            "Off hides every REST tool. On has no effect if the service "
+            "runs with AYON_MCP_ENABLE_OPENAPI_TOOLS=false."
+        ),
+    )
+    max_side_effect: str = SettingsField(
+        INHERIT,
+        title="Most allowed side effect",
+        enum_resolver=_side_effect_enum,
+        description=(
+            "Hides REST tools with a stronger side effect, e.g. Read-only "
+            "keeps only REST reads while curated write tools stay."
+        ),
+    )
 
 
 class PolicyEffectModel(BaseSettingsModel):
@@ -106,6 +209,14 @@ class PolicyEffectModel(BaseSettingsModel):
             "Off hides admin/security REST tools. On has no effect unless "
             "the service runs with AYON_MCP_ADMIN_TOOLS."
         ),
+    )
+    tools: ToolFilterModel = SettingsField(
+        default_factory=ToolFilterModel,
+        title="Curated and addon tools",
+    )
+    openapi: OpenApiFilterModel = SettingsField(
+        default_factory=OpenApiFilterModel,
+        title="REST tools",
     )
 
 

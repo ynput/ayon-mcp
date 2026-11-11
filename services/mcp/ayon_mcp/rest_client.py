@@ -73,15 +73,36 @@ class RestApiClient:
             return response.text
         return None
 
+    async def forward(self, request: httpx.Request) -> httpx.Response:
+        """Send a prepared request as the current caller.
+
+        Credentials always come from the caller's context, replacing any
+        the request already carries. The timeout is this client's too, not
+        one the request got from whichever client built it.
+
+        Args:
+            request: The prepared request.
+
+        Returns:
+            The response, with its body not read yet.
+
+        """
+        request.headers["x-api-key"] = get_global_ayon_api_key()
+        request.headers.pop("x-as-user", None)
+        if (as_user := get_global_ayon_as_user()) is not None:
+            request.headers["x-as-user"] = as_user
+        request.extensions["timeout"] = self.http_client.timeout.as_dict()
+        return await self.http_client.send(request, stream=True)
+
 
 def set_global_rest_client(client: RestApiClient | None) -> None:
-    """Set process-global RestApiClient used by generated OpenAPI tools."""
+    """Set process-global RestApiClient used by OpenAPI REST tools."""
     global _REST_CLIENT  # ruff: ignore[global-statement]
     _REST_CLIENT = client
 
 
 def get_global_rest_client() -> RestApiClient:
-    """Get the configured RestApiClient for generated OpenAPI tools.
+    """Get the configured RestApiClient for OpenAPI REST tools.
 
     Returns:
         RestApiClient: The global RestApiClient instance.

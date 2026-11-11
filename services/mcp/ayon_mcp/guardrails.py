@@ -157,8 +157,8 @@ def classify_side_effects(
     """Map each tool to its read-only / write / destructive classification.
 
     The classification itself is computed once per tool in
-    ``tool_discovery.tool_side_effect`` (curated tools by name, generated
-    REST tools via ``rest_policy``).
+    ``tool_discovery.tool_side_effect`` (curated tools by name, REST
+    tools via ``rest_policy``).
 
     Returns:
         A mapping of tool name to its ``SideEffectClass``.
@@ -213,7 +213,7 @@ def build_guard_chain(tools: list[AyonTool]) -> GuardChain | None:
     output_size = OutputSizeGuard(
         OutputSizeConfig(
             # Generous ceiling: paginated list tools already cap their own
-            # page size, so this only catches unpaginated/generated-tool
+            # page size, so this only catches unpaginated/REST-tool
             # responses that would otherwise blow out the model's context.
             max_bytes=2_000_000,
         )

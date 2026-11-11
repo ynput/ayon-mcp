@@ -220,7 +220,7 @@ Environment variables (or the matching CLI flags):
 | `AYON_SERVER_URL` | e.g. `https://ayon.mystudio.com` or `http://localhost:5000` |
 | `AYON_API_KEY` | API key of the user the assistant acts as |
 | `AYON_MCP_TOOL_EXPOSURE` | Set direct-tool surface (tools are directly exposed) |
-| `AYON_MCP_ENABLE_OPENAPI_TOOLS` | set to `false` to disable all OpenAPI generated tools |
+| `AYON_MCP_ENABLE_OPENAPI_TOOLS` | set to `false` to disable all OpenAPI REST tools |
 | `AYON_MCP_PORT` | control port the MCP service will listen on |
 | `AYON_MCP_TRANSPORT` | `http` or `tunnel` for remote mode (default: `tunnel` under ASH, otherwise `http`) |
 
@@ -274,7 +274,7 @@ and output-size checks) before it reaches AYON. See
 | --- | --- | --- |
 | `AYON_MCP_GUARDS` | `default` | `default` - the standard chain. `strict` - also blocks destructive tools (e.g. `delete_entity`) regardless of `confirm_mutation`, and blocks an identical tool call after it failed 3 times. `off` (or `false`/`0`/`no`) - disables the guard chain entirely. |
 | `AYON_MCP_READ_ONLY` | `false` | When truthy, write/destructive tools are not registered at all (in both discovery and direct exposure mode) and are refused if called. Enforced even with `AYON_MCP_GUARDS=off`. |
-| `AYON_MCP_ADMIN_TOOLS` | `false` | When truthy, registers generated REST tools for admin/security endpoints (secrets, API keys, auth/sessions, user and access management, `/api/system/*`, services, addon/installer uploads). Hidden by default, reads included. |
+| `AYON_MCP_ADMIN_TOOLS` | `false` | When truthy, registers REST tools for admin/security endpoints (secrets, API keys, auth/sessions, user and access management, `/api/system/*`, services, addon/installer uploads). Hidden by default, reads included. |
 
 Generated REST tools are classified by HTTP method (`GET` read-only,
 `POST`/`PUT`/`PATCH` write, `DELETE` destructive), with a reviewed override
@@ -287,39 +287,52 @@ When the AYON server adds endpoints,
 for classification suggestions to review - its output is never used at
 runtime.
 
-### Generated OpenAPI Tools
+### OpenAPI REST Tools
 
-This repository can expose an additional auto-generated tool layer from
-`services/mcp/ayon_openapi.json`.
+Besides the curated tools, every operation of the AYON REST API is available
+as a tool. They need AYON server 1.17.0 or newer, which `package.py` enforces
+when a bundle is validated. When the server is started from the command line,
+an older AYON server is only reported as a warning. Use `ayon-mcp` 0.2.0 with
+older servers.
 
-- Generated code location (ignored by Git):
-  `services/mcp/ayon_mcp/tools/openapi_generated/`
-- Generator script:
-  `services/mcp/scripts/generate_openapi_tools.py`
-- Transport client used by generated tools:
-  `RestApiClient` via `services/mcp/ayon_mcp/rest_client.py`
+The tools are built at startup with FastMCP's `from_openapi`, and run behind
+the same discovery provider, policy and guards as the curated tools:
 
-Generated OpenAPI tools are **enabled by default** and are available through
-the discovery tools. They are registered directly only when
-`AYON_MCP_TOOL_EXPOSURE=direct` is set.
+- Tool names are the API's operation ids. If a curated tool already has that
+  name, the REST tool gets the `openapi_` prefix, e.g. `openapi_get_project`.
+- Inputs use the spec's real types. Request body fields are top-level
+  arguments of the tool, next to the path and query parameters.
 
-On server startup, AYON MCP now:
+REST tools are **enabled by default** and are available through the discovery
+tools. They are registered directly only when `AYON_MCP_TOOL_EXPOSURE=direct`
+is set.
 
-1. Fetches `<AYON_SERVER_URL>/openapi.json`
-2. Computes a deterministic hash of the fetched spec
-3. Compares it with the local `services/mcp/ayon_openapi.json` hash
-4. Regenerates `openapi_generated` only when the spec changed (or generated files are missing)
+On startup, AYON MCP:
 
-To disable generated OpenAPI tools, set:
+1. Fetches `<AYON_SERVER_URL>/openapi.json` and builds the tools from it. The
+   tools are only rebuilt on the next start, so restart the service after an
+   AYON server upgrade.
+2. If that fails (AYON unreachable, invalid spec), logs a warning and uses the
+   tracked `services/mcp/ayon_openapi.json` instead. Its endpoints may differ
+   from those of your server, so some calls can return `404`.
+3. If that fails too, it logs an error and starts with the curated tools only.
+
+Only credentials from the caller's context, and headers the operation declares
+and the call sets, are sent to AYON. Other HTTP headers of the MCP client are
+dropped.
+
+To disable REST tools, set:
 
 - `AYON_MCP_ENABLE_OPENAPI_TOOLS=false`
 
 Accepted falsey values are: `0`, `false`, `no`, `off` (case-insensitive).
 
-You can still manually regenerate from the local spec file when needed:
+To refresh the tracked spec, then review the changed endpoints against
+`services/mcp/ayon_mcp/rest_policy.py`:
 
 ```sh
-uv run python ./services/mcp/scripts/generate_openapi_tools.py
+cd services/mcp
+uv run python -m scripts.update_openapi_spec --server-url <url> --api-key <key>
 ```
 
 ### Addon MCP Tools
@@ -365,7 +378,7 @@ The addon endpoint returns:
 - The manifest is the addon's own side-effect policy: `sideEffect`
   (`read_only`, `write` or `destructive`) classifies a tool, `readOnly:
   true` is a shorthand for `read_only` (use it for `POST` query
-  endpoints). Without either, the HTTP method decides as for generated
+  endpoints). Without either, the HTTP method decides as for OpenAPI
   REST tools: `GET` is read-only, `POST`/`PUT`/`PATCH` write and `DELETE`
   destructive. Write and destructive tools require
   `confirm_mutation=true`, go through the same guard chain as curated

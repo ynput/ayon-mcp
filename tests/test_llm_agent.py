@@ -163,6 +163,51 @@ async def test_agent_counts_versions_for_product(
 
 
 @pytest.mark.asyncio
+async def test_agent_reads_project_stats_with_rest_tool(
+    mcp_llm_rest_server_params,
+    ollama_host,
+    ollama_model,
+    project,
+    scenario_report,
+):
+    # Only OpenAPI REST tools return entity counts, so this checks that the
+    # model finds and calls a REST tool through discovery.
+    prompt = (
+        f"Using the project statistics of the AYON project "
+        f"'{project.project_name}', tell me how many representations it "
+        "has. Answer with a number."
+    )
+    async with open_mcp_session(mcp_llm_rest_server_params) as session:
+        run = await run_agent(
+            session,
+            host=ollama_host,
+            model=ollama_model,
+            system_prompt=DISCOVERY_SYSTEM_PROMPT,
+            user_prompt=prompt,
+        )
+
+    stats_calls = [
+        c
+        for c in run.tool_calls
+        if c.resolved_name
+        in {"get_project_stats", "get_project_entity_counts"}
+    ]
+    checks = {
+        "called_rest_counts_tool": bool(stats_calls),
+        "stats_succeeded": any(
+            isinstance(c.result, dict) and c.result.get("success") is True
+            for c in stats_calls
+        ),
+        "mentions_representation_count": str(len(project.representations))
+        in run.final_text,
+    }
+    outcome = _record(
+        scenario_report, "reads_project_stats_with_rest_tool", checks, run
+    )
+    assert outcome.passed, outcome.to_dict()
+
+
+@pytest.mark.asyncio
 async def test_agent_creates_folder_after_authorization(
     mcp_llm_server_params, ollama_host, ollama_model, project, scenario_report
 ):

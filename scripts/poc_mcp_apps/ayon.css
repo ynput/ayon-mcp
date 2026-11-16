@@ -1,0 +1,151 @@
+/* AYON design tokens (dark) - values from ayon-react-components
+   src/theme/tokens.css, states.css and src/index.scss. AYON is dark-only. */
+:root {
+  --md-sys-color-primary: #8FCEFF;
+  --md-sys-color-primary-hover: hsl(206, 80%, 73%);
+  --md-sys-color-on-primary: #00344F;
+  --md-sys-color-primary-container: #004B70;
+  --md-sys-color-on-primary-container: #EBF5FF;
+  --md-sys-color-tertiary: #23E0A9;
+  --md-sys-color-error: #FFB4AB;
+  --md-sys-color-error-container: #93000A;
+  --md-sys-color-on-error-container: #FFDAD6;
+  --md-sys-color-surface-container-lowest: #16191D;
+  --md-sys-color-surface-container-low: #1C2026;
+  --md-sys-color-surface-container: #272D35;
+  --md-sys-color-surface-container-high: #353B46;
+  --md-sys-color-surface-container-highest: #424A57;
+  --md-sys-color-surface-container-highest-hover: hsl(216, 11%, 34%);
+  --md-sys-color-on-surface: #F4F5F5;
+  --md-sys-color-on-surface-variant: #C1C7CE;
+  --md-sys-color-outline: #8B9198;
+  --md-sys-color-outline-variant: #41474D;
+
+  --base-font-family: 'Nunito Sans', system-ui, sans-serif;
+  --base-font-size: 13px;
+  --base-input-size: 32px;
+  --base-input-border-radius: 4px;
+  --base-gap-small: 4px;
+  --base-gap-medium: 6px;
+  --base-gap-large: 8px;
+  --border-radius-m: 4px;
+  --border-radius-l: 8px;
+  --padding-m: 8px;
+  --padding-l: 16px;
+  color-scheme: dark;
+}
+
+/* AYON light tokens (ayon-react-components tokens.css *-light). Applied when
+   the host (claude.ai / Claude Desktop) reports hostContext.theme = "light". */
+:root[data-theme="light"] {
+  --md-sys-color-primary: #006493;
+  --md-sys-color-primary-hover: hsl(200, 100%, 24%);
+  --md-sys-color-on-primary: #FFFFFF;
+  --md-sys-color-primary-container: #CAE6FF;
+  --md-sys-color-on-primary-container: #001E30;
+  --md-sys-color-tertiary: #006C4F;
+  --md-sys-color-error: #BA1A1A;
+  --md-sys-color-error-container: #FFDAD6;
+  --md-sys-color-on-error-container: #410002;
+  --md-sys-color-surface-container-lowest: #FFFFFF;
+  --md-sys-color-surface-container-low: #F3F4F6;
+  --md-sys-color-surface-container: #ECEEF1;
+  --md-sys-color-surface-container-high: #E7E8EB;
+  --md-sys-color-surface-container-highest: #E0E2E7;
+  --md-sys-color-surface-container-highest-hover: #D5D8DE;
+  --md-sys-color-on-surface: #191C1E;
+  --md-sys-color-on-surface-variant: #41474D;
+  --md-sys-color-outline: #71787E;
+  --md-sys-color-outline-variant: #C1C7CE;
+  color-scheme: light;
+}
+/* the AYON wordmark is white; draw it in on-surface on light backgrounds */
+:root[data-theme="light"] .logo svg [style*="fill:white"] {
+  fill: var(--md-sys-color-on-surface) !important;
+}
+
+* { box-sizing: border-box; }
+html, body {
+  margin: 0;
+  background: var(--md-sys-color-surface-container-lowest);
+  color: var(--md-sys-color-on-surface);
+  font-family: var(--base-font-family);
+  font-size: var(--base-font-size);
+  line-height: 1.4;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ARC .material-symbols-outlined */
+.icon {
+  font-family: 'Material Symbols Outlined';
+  font-weight: 200;
+  font-style: normal;
+  font-size: 20px;
+  line-height: 1;
+  letter-spacing: normal;
+  text-transform: none;
+  display: inline-block;
+  white-space: nowrap;
+  direction: ltr;
+  font-feature-settings: 'liga';
+  font-variation-settings: 'FILL' 0, 'wght' 200, 'GRAD' 200, 'opsz' 20;
+  -webkit-font-smoothing: antialiased;
+  user-select: none;
+  overflow: hidden;
+  width: 1em;
+}
+.icon.sm { font-size: 18px; }
+
+/* ARC Panel */
+.panel {
+  background: var(--md-sys-color-surface-container-low);
+  border-radius: var(--border-radius-l);
+  padding: var(--padding-m) 12px 12px;
+}
+.panel-title {
+  display: flex; align-items: center; gap: var(--base-gap-large);
+  font-size: 14px; font-weight: 600; line-height: 20px;
+  padding: 4px 0 8px;
+}
+.muted { color: var(--md-sys-color-on-surface-variant); }
+
+/* ARC Button: default = surface, .filled = primary */
+.btn {
+  display: inline-flex; align-items: center; justify-content: center;
+  gap: var(--base-gap-large);
+  height: var(--base-input-size);
+  padding: 6px 16px;
+  border: none; border-radius: var(--base-input-border-radius);
+  background: var(--md-sys-color-surface-container-highest);
+  color: var(--md-sys-color-on-surface);
+  font: inherit; font-size: 13px; cursor: pointer; white-space: nowrap; user-select: none;
+}
+.btn.has-icon { padding-left: 12px; }
+.btn:hover { background: var(--md-sys-color-surface-container-highest-hover); }
+.btn:focus-visible { outline: 2px solid var(--md-sys-color-primary); }
+.btn:disabled { opacity: .5; cursor: default; }
+.btn.filled { background: var(--md-sys-color-primary); color: var(--md-sys-color-on-primary); }
+.btn.filled:hover { background: var(--md-sys-color-primary-hover); }
+.btn.filled .icon { color: var(--md-sys-color-on-primary); }
+
+/* AYON status: icon + label in the status colour */
+.status {
+  display: inline-flex; align-items: center; gap: var(--base-gap-small);
+  font-weight: 600; white-space: nowrap;
+  color: var(--c);
+}
+/* AYON status colours are tuned for dark; darken them for contrast on light */
+:root[data-theme="light"] .status { color: color-mix(in oklab, var(--c) 62%, black); }
+
+/* tag, like the entity card assignee/type pills */
+.tag {
+  display: inline-flex; align-items: center; gap: var(--base-gap-small);
+  height: 24px; padding: 0 8px 0 6px;
+  border-radius: var(--border-radius-m);
+  background: var(--md-sys-color-surface-container);
+  color: var(--md-sys-color-on-surface);
+  font-size: 12px;
+}
+
+.logo { display: block; flex: none; }
+.logo svg { display: block; height: 18px; width: 54px; }

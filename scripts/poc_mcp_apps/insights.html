@@ -1,0 +1,128 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AYON Insights</title>
+<!--AYON_FONTS-->
+<!--AYON_TOKENS-->
+<style>
+  .card { padding: 12px; display: flex; flex-direction: column; gap: 8px; }
+  header { display: flex; align-items: center; gap: 12px; padding: 4px 4px 8px; }
+  header .divider { width: 1px; height: 20px; background: var(--md-sys-color-outline-variant); }
+  header h1 { font-size: 16px; font-weight: 600; line-height: 24px; margin: 0; }
+  header .sub { font-size: 12px; }
+  header .spacer { flex: 1; }
+  .kpis { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
+  .kpi { background: var(--md-sys-color-surface-container-low); border-radius: var(--border-radius-l);
+    padding: 10px 12px; display: flex; gap: 10px; align-items: center; }
+  .kpi .icon { font-size: 24px; color: var(--md-sys-color-on-surface-variant); }
+  .kpi b { display: block; font-size: 20px; line-height: 24px; font-weight: 700; font-variant-numeric: tabular-nums; }
+  .kpi span.l { font-size: 12px; color: var(--md-sys-color-on-surface-variant); }
+  .stack { display: flex; height: 8px; border-radius: 4px; overflow: hidden; background: var(--md-sys-color-surface-container); gap: 1px; }
+  .stack i { display: block; height: 100%; transition: opacity .15s; }
+  .legend { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 10px; }
+  .legend .btn { height: 28px; padding: 0 10px 0 8px; gap: 4px; background: var(--md-sys-color-surface-container); }
+  .legend .btn:hover { background: var(--md-sys-color-surface-container-high); }
+  .legend .btn.on { background: var(--md-sys-color-primary-container); }
+  .legend .btn.off { opacity: .45; }
+  .legend .n { color: var(--md-sys-color-on-surface-variant); font-variant-numeric: tabular-nums; margin-left: 2px; }
+  .rows { display: grid; grid-template-columns: 130px 1fr 52px; gap: 8px 12px; align-items: center; }
+  .rows .lbl { display: flex; align-items: center; gap: 6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .rows .num { text-align: right; color: var(--md-sys-color-on-surface-variant); font-variant-numeric: tabular-nums; font-size: 12px; }
+  .bar { height: 8px; border-radius: 4px; background: var(--md-sys-color-primary); }
+  .avatar { width: 20px; height: 20px; border-radius: 50%; background: var(--md-sys-color-surface-container-highest);
+    display: grid; place-items: center; font-size: 10px; font-weight: 700; flex: none; }
+  .actions { display: flex; gap: 8px; flex-wrap: wrap; padding-top: 4px; }
+  .empty { color: var(--md-sys-color-on-surface-variant); padding: 24px; text-align: center; }
+  @media (max-width: 520px) { .kpis { grid-template-columns: repeat(2, 1fr); } .rows { grid-template-columns: 100px 1fr 44px; } }
+</style>
+</head>
+<body>
+<div class="card" id="root"><div class="empty">Loading project insights…</div></div>
+<!--AYON_BRIDGE-->
+<script>
+let DATA = null; let focus = null;
+const pct = (a, b) => (b ? Math.round((100 * a) / b) : 0);
+const initials = (u) => u.split(/[._\s-]+/).filter(Boolean).slice(0, 2).map((p) => p[0].toUpperCase()).join("");
+
+window.onToolResult = (d) => { if (d) { DATA = d; render(); } };
+
+function render() {
+  const d = DATA; if (!d) return;
+  const root = document.getElementById("root");
+  const statuses = d.statuses.filter((s) => d.by_status[s.name]);
+  const sum = (state) => statuses.filter((s) => s.state === state).reduce((a, s) => a + d.by_status[s.name], 0);
+  const typeOf = Object.fromEntries(d.task_types.map((t) => [t.name, t]));
+
+  const stack = (counts, total) => `<div class="stack">${statuses.map((s) => {
+    const n = counts[s.name] || 0; if (!n) return "";
+    const dim = focus && focus !== s.name ? "opacity:.12" : "";
+    return `<i title="${esc(s.name)}: ${n}" style="width:${(100 * n) / total}%;background:${esc(s.color)};${dim}"></i>`;
+  }).join("")}</div>`;
+
+  const types = Object.entries(d.by_type)
+    .map(([name, counts]) => ({ name, counts, total: Object.values(counts).reduce((a, b) => a + b, 0) }))
+    .map((t) => ({ ...t, shown: focus ? t.counts[focus] || 0 : t.total }))
+    .sort((a, b) => b.shown - a.shown);
+  const maxA = Math.max(1, ...d.top_assignees.map((a) => a[1]));
+  const kpi = (ic, value, label) =>
+    `<div class="kpi">${icon(ic)}<div><b>${value}</b><span class="l">${label}</span></div></div>`;
+
+  root.innerHTML = `
+    <header>
+      <span class="logo"><!--AYON_LOGO--></span>
+      <span class="divider"></span>
+      <div><h1>${esc(d.project)}</h1><div class="sub muted">Project insights · live</div></div>
+    </header>
+    <div class="kpis">
+      ${kpi("task_alt", d.total_tasks.toLocaleString(), "Tasks")}
+      ${kpi("check", pct(d.done_tasks, d.total_tasks) + "%", "Done")}
+      ${kpi("play_arrow", sum("in_progress").toLocaleString(), "In progress")}
+      ${kpi("back_hand", sum("blocked").toLocaleString(), "Blocked / on hold")}
+    </div>
+    <div class="panel">
+      <div class="panel-title">${icon("insights", "sm")}Status</div>
+      ${stack(d.by_status, d.total_tasks)}
+      <div class="legend">${statuses.map((s) => `
+        <button class="btn ${focus === s.name ? "on" : focus ? "off" : ""}" data-status="${esc(s.name)}">
+          ${statusEl(s)}<span class="n">${d.by_status[s.name].toLocaleString()}</span>
+        </button>`).join("")}</div>
+    </div>
+    <div class="panel">
+      <div class="panel-title">${icon("task_alt", "sm")}Task types${focus ? `<span class="muted">· sorted by ${esc(focus)}</span>` : ""}</div>
+      <div class="rows">${types.map((t) => {
+        const tt = typeOf[t.name] || { icon: "task_alt", color: "" };
+        return `
+        <div class="lbl">${icon(tt.icon, "sm", tt.color ? `color:${esc(tt.color)}` : "")}${esc(t.name)}</div>
+        ${stack(t.counts, t.total)}
+        <div class="num">${focus ? t.shown.toLocaleString() + " / " : ""}${t.total.toLocaleString()}</div>`;
+      }).join("")}</div>
+    </div>
+    <div class="panel">
+      <div class="panel-title">${icon("person", "sm")}Open tasks per assignee</div>
+      <div class="rows">${d.top_assignees.length ? d.top_assignees.map(([u, n]) => `
+        <div class="lbl"><span class="avatar">${esc(initials(u))}</span>${esc(u)}</div>
+        <div><div class="bar" style="width:${(100 * n) / maxA}%"></div></div>
+        <div class="num">${n.toLocaleString()}</div>`).join("") : `<div class="muted">No assigned open tasks</div>`}</div>
+    </div>
+    <div class="actions">
+      <button class="btn filled has-icon" id="ask">${icon("keyboard_double_arrow_right", "sm")}Where are the bottlenecks?</button>
+      ${focus ? `<button class="btn has-icon" id="clear">${icon("close", "sm")}Clear filter</button>` : ""}
+    </div>`;
+
+  root.querySelectorAll(".legend .btn").forEach((el) => el.addEventListener("click", () => {
+    focus = focus === el.dataset.status ? null : el.dataset.status; render();
+  }));
+  const clear = document.getElementById("clear");
+  if (clear) clear.addEventListener("click", () => { focus = null; render(); });
+  document.getElementById("ask").addEventListener("click", () => {
+    request("ui/message", {
+      role: "user",
+      content: [{ type: "text", text: `Looking at the ${d.project} insights card: where are the bottlenecks${focus ? ` for tasks in "${focus}"` : ""}, and what should we unblock first?` }],
+    }).catch(() => {});
+  });
+}
+</script>
+</body>
+</html>

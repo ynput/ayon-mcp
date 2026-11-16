@@ -1,0 +1,111 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AYON Confirm</title>
+<!--AYON_FONTS-->
+<!--AYON_TOKENS-->
+<style>
+  body { padding: 12px; }
+  .card { background: var(--md-sys-color-surface-container-low); border-radius: var(--border-radius-l);
+    padding: 12px 16px 16px; display: flex; flex-direction: column; gap: 12px; }
+  .top { display: flex; align-items: center; gap: 10px; }
+  .top .divider { width: 1px; height: 16px; background: var(--md-sys-color-outline-variant); }
+  .top .k { font-size: 12px; color: var(--md-sys-color-on-surface-variant); }
+  .entity { display: flex; gap: 12px; align-items: center; background: var(--md-sys-color-surface-container);
+    border-radius: var(--border-radius-l); padding: 10px 12px; }
+  .entity .type-icon { width: 40px; height: 40px; border-radius: var(--border-radius-m); display: grid; place-items: center;
+    background: var(--md-sys-color-surface-container-high); flex: none; }
+  .entity .type-icon .icon { font-size: 24px; }
+  .entity h1 { margin: 0; font-size: 14px; font-weight: 600; line-height: 20px; }
+  .path { font-size: 12px; color: var(--md-sys-color-on-surface-variant); word-break: break-all; }
+  .meta { display: flex; gap: 4px; flex-wrap: wrap; margin-top: 6px; }
+  .change { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; padding: 4px 2px; }
+  .change .from { opacity: .55; }
+  .change .arrow { color: var(--md-sys-color-on-surface-variant); }
+  .change .status { font-size: 14px; }
+  .actions { display: flex; gap: 8px; justify-content: flex-end; }
+  .result { display: flex; gap: 8px; align-items: center; padding: 8px 12px; border-radius: var(--border-radius-m);
+    background: var(--md-sys-color-surface-container); }
+  .result.ok { color: var(--md-sys-color-tertiary); }
+  .result.err { background: var(--md-sys-color-error-container); color: var(--md-sys-color-on-error-container); }
+  .result.muted { color: var(--md-sys-color-on-surface-variant); }
+  .empty { color: var(--md-sys-color-on-surface-variant); padding: 24px; text-align: center; }
+</style>
+</head>
+<body>
+<div id="root"><div class="empty">Preparing change…</div></div>
+<!--AYON_BRIDGE-->
+<script>
+let D = null; let TOKEN = null; let state = "pending"; let message = "";
+const tellModel = (text) => request("ui/update-model-context", { content: [{ type: "text", text }] }).catch(() => {});
+
+window.onToolResult = (d, meta) => {
+  if (!d) return;
+  D = d; TOKEN = (meta && meta.ayon_poc && meta.ayon_poc.token) || null;
+  if (!TOKEN) { state = "error"; message = "This card cannot apply changes (no approval token; read-only server?)."; }
+  render();
+};
+
+function render() {
+  const d = D; if (!d) return;
+  const t = d.task;
+  const done = state !== "pending" && state !== "busy";
+  const resultIcon = { applied: "check", error: "error", cancelled: "close" }[state];
+  document.getElementById("root").innerHTML = `
+    <div class="card">
+      <div class="top">
+        <span class="logo"><!--AYON_LOGO--></span><span class="divider"></span>
+        <span class="k">Confirm change · ${esc(d.project)}</span>
+      </div>
+      <div class="entity">
+        <div class="type-icon">${icon(t.task_type_icon || "task_alt")}</div>
+        <div>
+          <h1>${esc(t.name)}</h1>
+          <div class="path">${esc(t.folder_path)}</div>
+          <div class="meta">
+            <span class="tag">${icon(t.task_type_icon || "task_alt", "sm")}${esc(t.task_type)}</span>
+            ${(t.assignees.length ? t.assignees : ["unassigned"]).map((a) => `<span class="tag">${icon("person", "sm")}${esc(a)}</span>`).join("")}
+          </div>
+        </div>
+      </div>
+      <div class="change">
+        <span class="from">${statusEl(d.from_status)}</span>
+        <span class="arrow">${icon("arrow_forward")}</span>
+        ${statusEl(d.to_status)}
+      </div>
+      ${done
+        ? `<div class="result ${state === "applied" ? "ok" : state === "error" ? "err" : "muted"}">${icon(resultIcon, "sm")}${esc(message)}</div>`
+        : `<div class="actions">
+             <button class="btn has-icon" id="no" ${state === "busy" ? "disabled" : ""}>${icon("close", "sm")}Cancel</button>
+             <button class="btn filled has-icon" id="ok" ${state === "busy" ? "disabled" : ""}>${icon(state === "busy" ? "sync" : "check", "sm")}${state === "busy" ? "Applying…" : "Approve"}</button>
+           </div>`}
+    </div>`;
+  if (done) return;
+  document.getElementById("ok").addEventListener("click", approve);
+  document.getElementById("no").addEventListener("click", () => {
+    state = "cancelled"; message = "Cancelled. Nothing changed."; render();
+    tellModel(`User cancelled the status change of ${t.folder_path}/${t.name}. Nothing was changed.`);
+  });
+}
+
+async function approve() {
+  const d = D; state = "busy"; render();
+  try {
+    const r = await request("tools/call", {
+      name: "apply_task_status_change",
+      arguments: { token: TOKEN },
+    });
+    const text = ((r && r.content) || []).map((c) => c.text).filter(Boolean).join(" ");
+    if (r && r.isError) { state = "error"; message = text || "Failed."; }
+    else { state = "applied"; message = text || "Applied."; }
+    tellModel(text || message);
+  } catch (err) {
+    state = "error"; message = (err && err.message) || "Host refused the call.";
+  }
+  render();
+}
+</script>
+</body>
+</html>

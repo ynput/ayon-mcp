@@ -13,8 +13,10 @@ from ayon_mcp.rest_policy import (
     ADMIN_PATTERNS,
     HTTP_METHODS,
     SIDE_EFFECT_OVERRIDES,
+    _APPLICATION_PATTERNS,
     endpoint_of,
     is_admin,
+    is_refused_to_applications,
     side_effect_for,
 )
 from ayon_mcp.tool_discovery import (
@@ -99,6 +101,72 @@ def test_every_admin_pattern_matches_an_operation_in_the_spec() -> None:
         )
     ]
     assert not stale, f"admin patterns matching nothing in the spec: {stale}"
+
+
+@pytest.mark.skipif(not SPEC_PATH.exists(), reason="no local OpenAPI spec")
+def test_every_application_pattern_matches_an_operation_in_the_spec() -> None:
+    operations = _spec_operations()
+    stale = [
+        pattern.pattern
+        for methods, pattern in _APPLICATION_PATTERNS
+        if not any(
+            (methods is None or method in methods) and pattern.search(path)
+            for method, path in operations
+        )
+    ]
+    assert not stale, f"patterns matching nothing in the spec: {stale}"
+
+
+# Endpoints with ``NoDelegatedAccess`` in ayon-backend.
+@pytest.mark.parametrize(
+    ("method", "path"),
+    [
+        ("POST", "/api/addons/install"),
+        ("GET", "/api/auth/sessions"),
+        ("POST", "/api/auth/sessions"),
+        ("POST", "/api/desktop/dependencyPackages"),
+        ("DELETE", "/api/desktop/dependencyPackages/{filename}"),
+        ("POST", "/api/desktop/installers"),
+        ("PUT", "/api/desktop/installers/{filename}"),
+        ("PATCH", "/api/profile"),
+        ("PUT", "/api/services/{name}"),
+        ("DELETE", "/api/services/{service_name}"),
+        ("GET", "/api/secrets"),
+        ("GET", "/api/secrets/{secret_name}"),
+        ("PUT", "/api/secrets/{secret_name}"),
+        ("POST", "/api/users/{user_name}/apikeys"),
+        ("PATCH", "/api/users/{user_name}/apikeys/{entity_id}"),
+        ("DELETE", "/api/users/{user_name}/apikeys/{entity_id}"),
+        ("PUT", "/api/users/{user_name}/avatar"),
+        ("DELETE", "/api/users/{user_name}/avatar"),
+        ("POST", "/api/users/{user_name}/invite"),
+        ("PUT", "/api/users/{user_name}"),
+        ("PATCH", "/api/users/{user_name}"),
+        ("DELETE", "/api/users/{user_name}"),
+        ("PATCH", "/api/users/{user_name}/password"),
+        ("POST", "/api/users/{user_name}/checkPassword"),
+        ("POST", "/api/users/{user_name}/rename"),
+        ("GET", "/api/users/{user_name}/sessions"),
+        ("DELETE", "/api/users/{user_name}/sessions/{session_id}"),
+        ("PATCH", "/api/users/{user_name}/accessGroups"),
+        ("PATCH", "/api/users/{user_name}/frontendPreferences"),
+    ],
+)
+def test_endpoints_refused_to_applications(method: str, path: str) -> None:
+    assert is_refused_to_applications(method, path)
+
+
+@pytest.mark.parametrize(
+    ("method", "path"),
+    [
+        ("GET", "/api/users/{user_name}"),
+        ("GET", "/api/users/{user_name}/avatar"),
+        ("GET", "/api/projects/{project_name}"),
+        ("POST", "/api/projects/{project_name}/operations"),
+    ],
+)
+def test_endpoints_open_to_applications(method: str, path: str) -> None:
+    assert not is_refused_to_applications(method, path)
 
 
 @pytest.mark.parametrize(

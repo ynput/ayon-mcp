@@ -31,6 +31,7 @@ from ayon_mcp.client import (
     get_global_ayon_api_key,
     get_global_ayon_as_user,
     get_global_ayon_client,
+    get_global_ayon_delegated_to,
 )
 from ayon_mcp.server import ServiceUserMiddleware
 from ayon_mcp.tunnel import (
@@ -241,7 +242,9 @@ async def test_mcp_tool_call_through_tunnel(
 ) -> None:
     clients: list[MagicMock] = []
 
-    def fake_get_ayon_api(base_url: str, api_key: str) -> MagicMock:
+    def fake_get_ayon_api(
+        base_url: str, api_key: str, application: str | None = None
+    ) -> MagicMock:
         client = MagicMock(name=f"ServerAPI({api_key})")
         clients.append(client)
         return client
@@ -435,6 +438,39 @@ async def test_service_user_middleware_requires_user_header(
         await middleware.on_call_tool(MagicMock(), call_next)
 
 
+@pytest.mark.parametrize(
+    ("headers", "expected"),
+    [
+        ({USER_HEADER: "alice"}, None),
+        ({USER_HEADER: "alice", "x-ayon-mcp-delegated": ""}, None),
+        (
+            {USER_HEADER: "alice", "x-ayon-mcp-delegated": "claude-desktop"},
+            "claude-desktop",
+        ),
+    ],
+)
+@pytest.mark.asyncio
+async def test_service_user_middleware_marks_applications(
+    monkeypatch: pytest.MonkeyPatch,
+    headers: dict[str, str],
+    expected: str | None,
+) -> None:
+    monkeypatch.setattr(server_module, "get_http_headers", lambda **_: headers)
+    monkeypatch.setattr(
+        server_module, "get_ayon_api", lambda *_: MagicMock()
+    )
+    middleware = ServiceUserMiddleware("http://ayon", SERVICE_KEY)
+    seen: dict[str, str | None] = {}
+
+    async def call_next(context):
+        seen["as_user"] = get_global_ayon_as_user()
+        seen["delegated"] = get_global_ayon_delegated_to()
+
+    await middleware.on_call_tool(MagicMock(), call_next)
+
+    assert seen == {"as_user": "alice", "delegated": expected}
+
+
 @pytest.mark.asyncio
 async def test_service_user_clients_are_bounded(
     monkeypatch: pytest.MonkeyPatch,
@@ -451,14 +487,58 @@ async def test_service_user_clients_are_bounded(
     assert await middleware._client_for("alice") is alice
     await middleware._client_for("carol")  # evicts bob, used least recently
 
-    assert list(middleware._clients) == ["alice", "carol"]
+    assert list(middleware._clients) == [("alice", None), ("carol", None)]
 
 
 @pytest.mark.asyncio
-async def test_rest_client_sends_as_user() -> None:
+async def test_service_user_client_names_the_application(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    created: list[tuple] = []
+
+    def get_ayon_api(*args):
+        created.append(args)
+        return MagicMock()
+
+    monkeypatch.setattr(server_module, "get_ayon_api", get_ayon_api)
+    middleware = ServiceUserMiddleware("http://ayon", SERVICE_KEY)
+
+    in_person = await middleware._client_for("alice")
+    app = await middleware._client_for("alice", "claude-desktop")
+
+    assert in_person is not app
+    assert created == [
+        ("http://ayon", SERVICE_KEY, None),
+        ("http://ayon", SERVICE_KEY, "claude-desktop"),
+    ]
+
+
+def test_ayon_client_of_an_application_names_it(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import ayon_api
+
+    from ayon_mcp.client import AS_APPLICATION_HEADER, _ApplicationServerAPI
+
+    # No server to connect to: only the headers added on top matter.
+    monkeypatch.setattr(ayon_api.ServerAPI, "__init__", lambda *_, **__: None)
+    monkeypatch.setattr(
+        ayon_api.ServerAPI, "get_headers", lambda *_: {"X-as-user": "alice"}
+    )
+    client = _ApplicationServerAPI(
+        "http://ayon", token=SERVICE_KEY, application="claude-desktop"
+    )
+
+    assert client.get_headers()[AS_APPLICATION_HEADER] == "claude-desktop"
+
+
+@pytest.mark.parametrize("application", [None, "claude-desktop"])
+@pytest.mark.asyncio
+async def test_rest_client_sends_as_user(application: str | None) -> None:
     from ayon_mcp.client import (
         set_global_ayon_api_key,
         set_global_ayon_as_user,
+        set_global_ayon_delegated_to,
     )
     from ayon_mcp.rest_client import RestApiClient
 
@@ -474,14 +554,19 @@ async def test_rest_client_sends_as_user() -> None:
     )
     set_global_ayon_api_key(SERVICE_KEY)
     set_global_ayon_as_user("alice")
+    set_global_ayon_delegated_to(application)
     try:
-        await client.request("GET", "/api/users/me")
+        await client.request(
+            "GET", "/api/users/me", headers={"x-as-application": "spoofed"}
+        )
     finally:
         set_global_ayon_as_user(None)
+        set_global_ayon_delegated_to(None)
         await client.close()
 
     assert seen["x-api-key"] == SERVICE_KEY
     assert seen["x-as-user"] == "alice"
+    assert seen.get("x-as-application") == application
 
 
 @pytest.fixture

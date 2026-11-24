@@ -126,9 +126,13 @@ class FakeWorker:
         return Response(status_code=200 if self.ready else 503)
 
     async def _proxy(self, request: Request) -> Response:
-        # Stands in for AYON auth: the authenticated user's name.
+        # Stands in for AYON auth: the authenticated user's name and, for
+        # an application acting as the user, its client id.
         return await proxy_request(
-            request, self.hub, request.headers.get("x-test-user", "nobody")
+            request,
+            self.hub,
+            request.headers.get("x-test-user", "nobody"),
+            request.headers.get("x-test-delegated"),
         )
 
     @property

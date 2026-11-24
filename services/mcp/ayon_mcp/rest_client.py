@@ -6,7 +6,12 @@ from typing import Any
 
 import httpx
 
-from .client import get_global_ayon_api_key, get_global_ayon_as_user
+from .client import (
+    AS_APPLICATION_HEADER,
+    get_global_ayon_api_key,
+    get_global_ayon_as_user,
+    get_global_ayon_delegated_to,
+)
 
 _REST_CLIENT: RestApiClient | None = None
 
@@ -55,6 +60,9 @@ class RestApiClient:
             request_headers["x-api-key"] = get_global_ayon_api_key()
         if (as_user := get_global_ayon_as_user()) is not None:
             request_headers.setdefault("x-as-user", as_user)
+        request_headers.pop(AS_APPLICATION_HEADER, None)
+        if (application := get_global_ayon_delegated_to()) is not None:
+            request_headers[AS_APPLICATION_HEADER] = application
 
         response = await self.http_client.request(
             method=method.upper(),
@@ -89,8 +97,11 @@ class RestApiClient:
         """
         request.headers["x-api-key"] = get_global_ayon_api_key()
         request.headers.pop("x-as-user", None)
+        request.headers.pop(AS_APPLICATION_HEADER, None)
         if (as_user := get_global_ayon_as_user()) is not None:
             request.headers["x-as-user"] = as_user
+        if (application := get_global_ayon_delegated_to()) is not None:
+            request.headers[AS_APPLICATION_HEADER] = application
         request.extensions["timeout"] = self.http_client.timeout.as_dict()
         return await self.http_client.send(request, stream=True)
 

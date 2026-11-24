@@ -18,14 +18,21 @@ from typing import TYPE_CHECKING, Any
 
 import httpx
 from fastmcp import FastMCP
+from fastmcp.exceptions import ToolError
 from fastmcp.server.providers.openapi import MCPType, RouteMap
 from fastmcp.tools.base import Tool, ToolResult
 from fastmcp.utilities.openapi import (
     HTTPRoute,  # ruff: ignore[typing-only-third-party-import]
 )
 
+from .client import get_global_ayon_delegated_to
 from .rest_client import get_global_rest_client
-from .rest_policy import HTTP_METHOD_ATTR, HTTP_PATH_ATTR
+from .rest_policy import (
+    HTTP_METHOD_ATTR,
+    HTTP_PATH_ATTR,
+    drop_user_secrets,
+    is_refused_to_applications,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterable
@@ -87,9 +94,47 @@ class _AyonTransport(httpx.AsyncBaseTransport):
             if name.lower() not in allowed:
                 del request.headers[name]
         response = await get_global_rest_client().forward(request)
+        if get_global_ayon_delegated_to() is not None:
+            response = await _without_user_secrets(request, response)
         if (responses := _CALL_RESPONSES.get()) is not None:
             responses.append(response)
         return response
+
+
+async def _without_user_secrets(
+    request: httpx.Request, response: httpx.Response
+) -> httpx.Response:
+    """Return the response without the user's secret data, for an app.
+
+    AYON leaves them out for an application acting as the user, but not
+    for ``x-as-user``.
+
+    Returns:
+        The response itself, or a copy with the secrets removed.
+
+    """
+    if request.method != "GET" or not response.is_success:
+        return response
+    content = await response.aread()
+    try:
+        body = json.loads(content)
+    except ValueError:
+        return response
+    if not drop_user_secrets(request.method, request.url.path, body):
+        return response
+    # ``aread`` decoded the body, and its length changes.
+    headers = [
+        (name, value)
+        for name, value in response.headers.multi_items()
+        if name.lower() not in {"content-length", "content-encoding"}
+    ]
+    return httpx.Response(
+        response.status_code,
+        headers=headers,
+        content=json.dumps(body).encode(),
+        request=request,
+        extensions=response.extensions,
+    )
 
 
 def _declared_headers(
@@ -116,7 +161,21 @@ class RestTool(Tool):
         Returns:
             The tool result built by FastMCP.
 
+        Raises:
+            ToolError: If an application acting as the user calls an
+                operation AYON refuses to applications.
+
         """
+        method = self.route.method.upper()
+        if get_global_ayon_delegated_to() is not None and (
+            is_refused_to_applications(method, self.route.path)
+        ):
+            msg = (
+                f"{method} {self.route.path} is not available to "
+                "applications acting as a user: it manages accounts, "
+                "credentials or the server. Sign in to AYON to do it."
+            )
+            raise ToolError(msg)
         token = _CALL_HEADERS.set(_declared_headers(self.route, arguments))
         try:
             return await self.openapi_tool.run(arguments)

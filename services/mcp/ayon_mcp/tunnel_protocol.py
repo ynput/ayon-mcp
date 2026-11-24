@@ -42,7 +42,7 @@ import uuid
 from dataclasses import dataclass
 from typing import Any
 
-PROTOCOL_VERSION = 3
+PROTOCOL_VERSION = 4
 # Sent by the service when connecting, so the server can reject
 # incompatible clients before any traffic.
 PROTOCOL_HEADER = "x-ayon-mcp-tunnel"
@@ -53,6 +53,14 @@ PROTOCOL_HEADER = "x-ayon-mcp-tunnel"
 # drops this header from client requests, so it can't be spoofed through
 # the tunnel.
 USER_HEADER = "x-ayon-mcp-user"
+
+# Set by the server when the caller is an application acting as the user
+# (a delegated session, such as an OAuth access token), to the
+# application's client id. The service names it in ``x-as-application``
+# next to ``x-as-user``, so AYON limits the request like the application
+# itself: no credentials, accounts or secret user data. The server drops
+# this header from client requests too.
+DELEGATED_HEADER = "x-ayon-mcp-delegated"
 
 # Request/response bodies are split into chunks of at most this size.
 MAX_CHUNK_SIZE = 64 * 1024

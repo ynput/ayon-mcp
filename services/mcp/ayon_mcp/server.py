@@ -71,7 +71,11 @@ class RemoteApiKeyMiddleware(Middleware):
             RuntimeError: If the ``x-api-key`` header is missing or empty.
 
         """
-        from .client import set_global_ayon_api_key, set_global_ayon_as_user
+        from .client import (
+            set_global_ayon_api_key,
+            set_global_ayon_as_user,
+            set_global_ayon_delegated_to,
+        )
 
         headers = get_http_headers()
         request_api_key = (headers.get("x-api-key") or "").strip()
@@ -88,6 +92,7 @@ class RemoteApiKeyMiddleware(Middleware):
         )
         set_global_ayon_api_key(request_api_key)
         set_global_ayon_as_user(None)
+        set_global_ayon_delegated_to(None)
         set_global_ayon_client(client)
         return await call_next(context)  # ty: ignore[invalid-return-type]
 
@@ -99,9 +104,13 @@ class ServiceUserMiddleware(Middleware):
     and passes only the user name in ``USER_HEADER``. Tool calls then use
     the service's own API key with ``x-as-user``, so the caller's
     permissions apply and the caller's credentials never leave the server.
+    For an application acting as the user the server also passes its
+    client id in ``DELEGATED_HEADER``. Requests to AYON then name it in
+    ``x-as-application``, so AYON limits them like the application itself.
 
-    Only safe behind the tunnel: the server drops ``USER_HEADER`` from
-    client requests. Never use it on a directly reachable HTTP port.
+    Only safe behind the tunnel: the server drops ``USER_HEADER`` and
+    ``DELEGATED_HEADER`` from client requests. Never use it on a directly
+    reachable HTTP port.
     """
 
     def __init__(
@@ -118,25 +127,35 @@ class ServiceUserMiddleware(Middleware):
         self._base_url = base_url
         self._api_key = service_api_key
         self._max_clients = max_clients
-        self._clients: OrderedDict[str, ayon_api.ServerAPI] = OrderedDict()
+        # Keyed by user and the application acting as the user, if any.
+        self._clients: OrderedDict[
+            tuple[str, str | None], ayon_api.ServerAPI
+        ] = OrderedDict()
 
-    def _new_client(self, user_name: str) -> ayon_api.ServerAPI:
-        client = get_ayon_api(self._base_url, self._api_key)
+    def _new_client(
+        self, user_name: str, application: str | None
+    ) -> ayon_api.ServerAPI:
+        client = get_ayon_api(self._base_url, self._api_key, application)
         # Raises ValueError if the key is not a service user's key.
         client.set_default_service_username(user_name)
         return client
 
-    async def _client_for(self, user_name: str) -> ayon_api.ServerAPI:
-        client = self._clients.get(user_name)
+    async def _client_for(
+        self, user_name: str, application: str | None = None
+    ) -> ayon_api.ServerAPI:
+        key = (user_name, application)
+        client = self._clients.get(key)
         if client is None:
             # Blocking HTTP calls run in a thread; the cache itself is only
             # touched on the event loop.
-            client = await asyncio.to_thread(self._new_client, user_name)
-            self._clients[user_name] = client
+            client = await asyncio.to_thread(
+                self._new_client, user_name, application
+            )
+            self._clients[key] = client
             while len(self._clients) > self._max_clients:
                 self._clients.popitem(last=False)
         else:
-            self._clients.move_to_end(user_name)
+            self._clients.move_to_end(key)
         return client
 
     async def on_call_tool(
@@ -157,12 +176,15 @@ class ServiceUserMiddleware(Middleware):
             RuntimeError: If the request carries no user name.
 
         """
-        from .client import set_global_ayon_api_key, set_global_ayon_as_user
-        from .tunnel_protocol import USER_HEADER
+        from .client import (
+            set_global_ayon_api_key,
+            set_global_ayon_as_user,
+            set_global_ayon_delegated_to,
+        )
+        from .tunnel_protocol import DELEGATED_HEADER, USER_HEADER
 
-        user_name = (
-            get_http_headers(include_all=True).get(USER_HEADER) or ""
-        ).strip()
+        headers = get_http_headers(include_all=True)
+        user_name = (headers.get(USER_HEADER) or "").strip()
         if not user_name:
             msg = (
                 f"Missing '{USER_HEADER}' header. In tunnel mode requests "
@@ -173,7 +195,10 @@ class ServiceUserMiddleware(Middleware):
 
         set_global_ayon_api_key(self._api_key)
         set_global_ayon_as_user(user_name)
-        set_global_ayon_client(await self._client_for(user_name))
+        # Set by the server for an application acting as the user.
+        application = (headers.get(DELEGATED_HEADER) or "").strip() or None
+        set_global_ayon_delegated_to(application)
+        set_global_ayon_client(await self._client_for(user_name, application))
         return await call_next(context)  # ty: ignore[invalid-return-type]
 
 
@@ -207,12 +232,17 @@ class StaticApiKeyMiddleware(Middleware):
             The result of the next middleware or tool handler.
 
         """
-        from .client import set_global_ayon_api_key, set_global_ayon_as_user
+        from .client import (
+            set_global_ayon_api_key,
+            set_global_ayon_as_user,
+            set_global_ayon_delegated_to,
+        )
 
         if self._client is None:
             self._client = get_ayon_api(self._base_url, self._api_key)
         set_global_ayon_api_key(self._api_key)
         set_global_ayon_as_user(None)
+        set_global_ayon_delegated_to(None)
         set_global_ayon_client(self._client)
         return await call_next(context)  # ty: ignore[invalid-return-type]
 

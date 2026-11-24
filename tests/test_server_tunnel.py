@@ -32,6 +32,7 @@ from mcp_tunnel.protocol import (
     PROTOCOL_HEADER,
     PROTOCOL_VERSION,
     USER_HEADER,
+    DELEGATED_HEADER,
     Frame,
     FrameType,
 )
@@ -115,6 +116,7 @@ class FakeService:
                 "path": request["path"],
                 "query": request["query"],
                 "user": headers.get(USER_HEADER),
+                "delegated": headers.get(DELEGATED_HEADER),
                 "api_key": headers.get("x-api-key"),
                 "cookie": headers.get("cookie"),
                 "body": request["body"].decode(),
@@ -137,7 +139,9 @@ class FakeService:
             self.release.clear()
 
 
-async def _echo_through(request_worker: int) -> httpx.Response:
+async def _echo_through(
+    request_worker: int, extra_headers: dict[str, str] | None = None
+) -> httpx.Response:
     network = MemoryNetwork()
     workers = [FakeWorker(network), FakeWorker(network)]
     async with running(workers[0]), running(workers[1]):
@@ -152,8 +156,11 @@ async def _echo_through(request_worker: int) -> httpx.Response:
                         "x-test-user": "alice",
                         "cookie": "accessToken=must-not-leak",
                         "x-api-key": "callers-own-key",
-                        # A client must not be able to pick the user.
+                        # A client must not be able to pick the user, nor
+                        # drop the limits of an application.
                         USER_HEADER: "admin",
+                        DELEGATED_HEADER: "",
+                        **(extra_headers or {}),
                     },
                 )
 
@@ -165,6 +172,7 @@ def _assert_echo(response: httpx.Response) -> None:
         "path": "/mcp",
         "query": "x=1",
         "user": "alice",
+        "delegated": None,
         "api_key": None,
         "cookie": None,
         "body": '{"jsonrpc": "2.0"}',
@@ -172,6 +180,14 @@ def _assert_echo(response: httpx.Response) -> None:
     assert response.headers["mcp-session-id"] == "abc"
     assert "set-cookie" not in response.headers
     assert response.headers["x-accel-buffering"] == "no"
+
+
+def test_application_client_id_is_forwarded() -> None:
+    response = asyncio.run(
+        _echo_through(0, {"x-test-delegated": "claude-desktop"})
+    )
+
+    assert response.json()["delegated"] == "claude-desktop"
 
 
 def test_request_to_worker_holding_the_tunnel() -> None:

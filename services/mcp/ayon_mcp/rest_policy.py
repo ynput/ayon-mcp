@@ -177,6 +177,75 @@ def is_admin(method: str, path: str) -> bool:
     )
 
 
+# AYON refuses these to an application acting as a user (endpoints with
+# ``NoDelegatedAccess``), besides the ``ADMIN_PATTERNS``. The service calls
+# AYON with ``x-as-user``, which AYON doesn't treat as an application, so
+# the service refuses them itself.
+_APPLICATION_PATTERNS: tuple[AdminPattern, ...] = tuple(
+    (methods, re.compile(pattern))
+    for methods, pattern in (
+        (_WRITES, r"^/api/users/\{user_name\}/(avatar|frontendPreferences)$"),
+    )
+)
+
+# Never shown to an application acting as the user: they allow logging in
+# as the user. AYON drops them for applications, but not with
+# ``x-as-user``. Mirrors ``SECRET_USER_DATA_KEYS`` of ayon-backend.
+SECRET_USER_DATA_KEYS = (
+    "password",
+    "apiKey",
+    "apiKeys",
+    "passwordResetRequest",
+    "supportToken",
+    "inviteRequest",
+)
+
+# Concrete paths whose response is a user, with the user's ``data``. Not
+# anchored at the start: AYON may be served below a path prefix.
+_USER_RESPONSE_PATH = re.compile(r"/api/(profile|users/[^/]+)/?$")
+
+
+def is_refused_to_applications(method: str, path: str) -> bool:
+    """Return True if AYON refuses the operation to an application.
+
+    Args:
+        method: HTTP method.
+        path: Path template, as in the OpenAPI spec.
+
+    Returns:
+        Whether an application acting as the user may not call it.
+
+    """
+    method = method.upper()
+    return is_admin(method, path) or any(
+        (methods is None or method in methods) and pattern.search(path)
+        for methods, pattern in _APPLICATION_PATTERNS
+    )
+
+
+def drop_user_secrets(method: str, path: str, body: Any) -> bool:  # ruff: ignore[any-type]
+    """Remove the user's secret data from a user response, in place.
+
+    Args:
+        method: HTTP method of the request.
+        path: Concrete path of the request.
+        body: Parsed JSON response body.
+
+    Returns:
+        Whether anything was removed.
+
+    """
+    if method.upper() != "GET" or not _USER_RESPONSE_PATH.search(path):
+        return False
+    if not isinstance(body, dict) or not isinstance(body.get("data"), dict):
+        return False
+    data = body["data"]
+    removed = [key for key in SECRET_USER_DATA_KEYS if key in data]
+    for key in removed:
+        del data[key]
+    return bool(removed)
+
+
 def endpoint_of(function: Callable[..., Any]) -> tuple[str, str] | None:
     """Return the ``(METHOD, path)`` a REST tool calls.
 

@@ -11,6 +11,7 @@ from starlette.responses import JSONResponse, Response, StreamingResponse
 
 from .hub import END_FRAMES, Route, TunnelClosedError, TunnelHub
 from .protocol import (
+    DELEGATED_HEADER,
     INITIAL_WINDOW,
     USER_HEADER,
     Frame,
@@ -35,15 +36,18 @@ RESPONSE_START_TIMEOUT = 60.0
 WINDOW_UPDATE_THRESHOLD = INITIAL_WINDOW // 4
 
 # Caller credentials never reach the service. The server authenticates the
-# caller and passes only the user name (``USER_HEADER``); the service calls
-# AYON with its own service key and ``x-as-user``. A client-sent
-# ``USER_HEADER`` is dropped, so it can't be used to impersonate anyone.
+# caller and passes only the user name (``USER_HEADER``) and, for an
+# application acting as the user, its client id (``DELEGATED_HEADER``); the
+# service calls AYON with its own service key and ``x-as-user``. Client-sent
+# copies of both are dropped, so they can't be used to impersonate anyone
+# or to drop the limits of an application.
 CREDENTIAL_HEADERS = frozenset({
     "authorization",
     "cookie",
     "x-api-key",
     "x-as-user",
     USER_HEADER,
+    DELEGATED_HEADER,
 })
 
 # How long to keep trying to tell the service a request was cancelled.
@@ -143,12 +147,16 @@ class _ProxiedRequest:
         self.route = route
         self.finished = False
 
-    async def forward(self, request: Request, user_name: str) -> None:
+    async def forward(
+        self, request: Request, user_name: str, delegated_to: str | None
+    ) -> None:
         """Send the request line, headers and body to the service."""
         headers = filter_headers(
             list(request.headers.items()), drop=CREDENTIAL_HEADERS
         )
         headers.append((USER_HEADER, user_name))
+        if delegated_to is not None:
+            headers.append((DELEGATED_HEADER, delegated_to))
         stream_id = self.route.stream_id
         await self.route.send(
             Frame.with_json(
@@ -263,12 +271,18 @@ class _ProxiedRequest:
 
 
 async def proxy_request(
-    request: Request, hub: TunnelHub, user_name: str
+    request: Request,
+    hub: TunnelHub,
+    user_name: str,
+    delegated_to: str | None = None,
 ) -> Response:
     """Forward an MCP HTTP request to a connected service.
 
     ``request`` must already be authenticated as ``user_name``. The service
     acts on AYON as that user (service API key + ``x-as-user``).
+    ``delegated_to`` is the client id of the application acting as the
+    user, if any: ``x-as-user`` drops the limits AYON puts on it, so the
+    service keeps them.
 
     Returns:
         The service's response, streamed as it is produced, or
@@ -281,7 +295,7 @@ async def proxy_request(
 
     proxied = _ProxiedRequest(route)
     try:
-        await proxied.forward(request, user_name)
+        await proxied.forward(request, user_name, delegated_to)
         first = await _first_frame(request, route)
     except TunnelClosedError:
         route.close()

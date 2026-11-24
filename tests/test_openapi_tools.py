@@ -12,6 +12,7 @@ from typing import Any
 import httpx
 import pytest
 from fastmcp import Client
+from fastmcp.exceptions import ToolError
 from fastmcp.server.http import _current_http_request
 from fastmcp.server.middleware import Middleware
 from starlette.requests import Request
@@ -20,6 +21,7 @@ from ayon_mcp import openapi_tools, server as server_module
 from ayon_mcp.client import (
     set_global_ayon_api_key,
     set_global_ayon_as_user,
+    set_global_ayon_delegated_to,
 )
 from ayon_mcp.openapi_tools import (
     SPEC_PATH,
@@ -93,9 +95,11 @@ def ayon() -> Iterator[FakeAyon]:
     set_global_rest_client(fake.client())
     set_global_ayon_api_key("service-key")
     set_global_ayon_as_user(None)
+    set_global_ayon_delegated_to(None)
     yield fake
     set_global_rest_client(None)
     set_global_ayon_as_user(None)
+    set_global_ayon_delegated_to(None)
 
 
 @contextmanager
@@ -379,6 +383,90 @@ async def test_http_error_includes_response_detail(
         )
 
 
+# --- Applications acting as a user ---------------------------------------
+
+USER_WITH_SECRETS = {
+    "name": "alice",
+    "data": {
+        "isAdmin": False,
+        "apiKeys": [{"id": "k", "preview": "abc***"}],
+        "password": "hash:salt",
+        "supportToken": "t",
+    },
+}
+
+
+@pytest.mark.parametrize(
+    ("method", "path", "arguments"),
+    [
+        ("POST", "/api/users/{user_name}/apikeys", {"user_name": "alice"}),
+        ("GET", "/api/secrets", {}),
+        ("PUT", "/api/users/{user_name}/avatar", {"user_name": "alice"}),
+    ],
+)
+@pytest.mark.asyncio
+async def test_application_cannot_call_refused_endpoints(
+    ayon, tracked_tools, method, path, arguments
+) -> None:
+    set_global_ayon_as_user("alice")
+    set_global_ayon_delegated_to("claude-desktop")
+
+    with pytest.raises(ToolError, match="not available to applications"):
+        await tracked_tools[method, path](**arguments)
+
+    assert ayon.requests == []
+
+
+@pytest.mark.asyncio
+async def test_application_can_call_other_endpoints(
+    ayon, tracked_tools
+) -> None:
+    set_global_ayon_as_user("alice")
+    set_global_ayon_delegated_to("claude-desktop")
+
+    await tracked_tools["GET", "/api/projects/{project_name}"](
+        project_name="demo"
+    )
+
+    headers = ayon.requests[-1].headers
+    assert headers["x-as-user"] == "alice"
+    assert headers["x-as-application"] == "claude-desktop"
+
+
+@pytest.mark.parametrize(
+    ("path", "arguments"),
+    [
+        ("/api/users/{user_name}", {"user_name": "alice"}),
+        ("/api/profile", {}),
+    ],
+)
+@pytest.mark.asyncio
+async def test_application_does_not_see_user_secrets(
+    ayon, tracked_tools, path, arguments
+) -> None:
+    set_global_ayon_as_user("alice")
+    set_global_ayon_delegated_to("claude-desktop")
+    ayon.response = httpx.Response(200, json=USER_WITH_SECRETS)
+
+    result = await tracked_tools["GET", path](**arguments)
+
+    assert result == {"name": "alice", "data": {"isAdmin": False}}
+
+
+@pytest.mark.asyncio
+async def test_user_in_person_sees_own_user_data(
+    ayon, tracked_tools
+) -> None:
+    set_global_ayon_as_user("alice")
+    ayon.response = httpx.Response(200, json=USER_WITH_SECRETS)
+
+    result = await tracked_tools["GET", "/api/users/{user_name}"](
+        user_name="alice"
+    )
+
+    assert result == USER_WITH_SECRETS
+
+
 # --- Headers --------------------------------------------------------------
 
 
@@ -389,6 +477,7 @@ async def test_remote_caller_headers_do_not_reach_ayon(
     with caller_headers({
         "x-api-key": "spoofed-key",
         "x-as-user": "admin",
+        "x-as-application": "spoofed",
         "x-ayon-mcp-user": "admin",
         "x-forwarded-for": "10.0.0.1",
         "x-sender": "spoofed",
@@ -402,6 +491,7 @@ async def test_remote_caller_headers_do_not_reach_ayon(
     assert headers["x-api-key"] == "service-key"
     for name in (
         "x-as-user",
+        "x-as-application",
         "x-ayon-mcp-user",
         "x-forwarded-for",
         "x-sender",

@@ -8,14 +8,45 @@ _CLIENT_CV: ContextVar[ayon_api.ServerAPI | None] = ContextVar(
     "api_client", default=None)
 _API_KEY_CV: ContextVar[str | None] = ContextVar("api_key", default=None)
 _AS_USER_CV: ContextVar[str | None] = ContextVar("as_user", default=None)
+_DELEGATED_CV: ContextVar[str | None] = ContextVar("delegated", default=None)
+
+# Sent with ``x-as-user`` when the service acts for an application of the
+# user (an MCP client signed in with OAuth), naming its client id. AYON then
+# gives the request the limits of an application: no credentials, accounts
+# or secret user data. Servers without support ignore it.
+AS_APPLICATION_HEADER = "x-as-application"
 
 
-def get_ayon_api(server_url: str, api_key: str) -> ayon_api.ServerAPI:
+class _ApplicationServerAPI(ayon_api.ServerAPI):
+    """AYON client of a service acting as a user for an application."""
+
+    def __init__(self, base_url: str, token: str, application: str) -> None:
+        # ``ServerAPI.__init__`` may already build the headers.
+        self._application = application
+        super().__init__(base_url, token=token)
+
+    def get_headers(self, content_type: str | None = None) -> dict[str, str]:
+        """Return the request headers, naming the application.
+
+        Returns:
+            The headers of ``ServerAPI`` with ``AS_APPLICATION_HEADER``.
+
+        """
+        headers = super().get_headers(content_type)
+        headers[AS_APPLICATION_HEADER] = self._application
+        return headers
+
+
+def get_ayon_api(
+    server_url: str, api_key: str, application: str | None = None
+) -> ayon_api.ServerAPI:
     """Return an instance of the API client.
 
     Args:
         server_url: AYON server URL (e.g. http://localhost:5000)
         api_key: AYON API key
+        application: Client id of the application a service acts as a
+            user for, sent as ``AS_APPLICATION_HEADER``.
 
     Returns:
         An instance of the AYON API client.
@@ -24,7 +55,12 @@ def get_ayon_api(server_url: str, api_key: str) -> ayon_api.ServerAPI:
         RuntimeError: If the API key is invalid or the server is unreachable.
 
     """
-    server = ayon_api.ServerAPI(server_url, token=api_key)
+    if application is None:
+        server = ayon_api.ServerAPI(server_url, token=api_key)
+    else:
+        server = _ApplicationServerAPI(
+            server_url, token=api_key, application=application
+        )
 
     if not server.has_valid_token:
         msg = (
@@ -82,6 +118,33 @@ def get_global_ayon_as_user() -> str | None:
 
     """
     return _AS_USER_CV.get()
+
+
+def set_global_ayon_delegated_to(client_id: str | None) -> None:
+    """Set the application acting as the user in this context, if any.
+
+    Args:
+        client_id: Client id of the application (a delegated session, such
+            as an OAuth access token), or ``None`` when the user calls in
+            person.
+
+    """
+    _DELEGATED_CV.set(client_id)
+
+
+def get_global_ayon_delegated_to() -> str | None:
+    """Get the application acting as the user in this context, if any.
+
+    Requests acting as the user name it in ``AS_APPLICATION_HEADER``, so
+    AYON applies its limits on applications. Older servers ignore it and
+    give ``x-as-user`` the user's full access, so REST tools apply the
+    limits too.
+
+    Returns:
+        The client id, or ``None`` when the user calls in person.
+
+    """
+    return _DELEGATED_CV.get()
 
 
 def get_global_ayon_api_key() -> str:

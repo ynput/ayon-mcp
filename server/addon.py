@@ -4,6 +4,7 @@ from typing import Type
 from ayon_server.addons import BaseServerAddon
 from ayon_server.api.auth import user_from_request
 from ayon_server.api.dependencies import CurrentUser
+from ayon_server.entities import UserEntity
 from ayon_server.exceptions import AyonException
 from ayon_server.settings import BaseSettingsModel
 from fastapi import APIRouter, Request, Response, WebSocket
@@ -46,6 +47,26 @@ async def _authenticate_service(websocket: WebSocket) -> str:
     return user.name
 
 
+def _delegated_to(user: UserEntity) -> str | None:
+    """Return the client id of the application acting as the user, if any.
+
+    An application (a delegated session, such as an OAuth access token)
+    may not do everything its user may. The service calls AYON with
+    ``x-as-user``, which carries none of these limits, so it has to be
+    told to keep them.
+
+    Returns:
+        The client id, or ``None`` when the user calls in person.
+
+    """
+    # Servers older than delegated sessions have neither attribute.
+    session = getattr(user, "session", None)
+    delegated = getattr(session, "delegated", None)
+    if delegated is None:
+        return None
+    return delegated.client_id or "unknown"
+
+
 class MCPAddon(BaseServerAddon):
     """Add-on class for the server."""
     settings_model: Type[MCPSettings] = MCPSettings
@@ -78,7 +99,9 @@ class MCPAddon(BaseServerAddon):
             The service's response, streamed.
 
         """
-        return await proxy_request(request, self.tunnels, user.name)
+        return await proxy_request(
+            request, self.tunnels, user.name, _delegated_to(user)
+        )
 
     async def ws(self, websocket: WebSocket) -> None:
         """Tunnel connection of the MCP service."""

@@ -17,7 +17,7 @@ from .mcp_tunnel import (
     serve_tunnel,
 )
 from .mcp_tunnel.redis_bus import RedisTunnelBus
-from .settings import DEFAULT_VALUES, MCPSettings
+from .settings import DEFAULT_VALUES, MCPSettings, get_endpoint_url
 
 
 async def _authenticate_service(websocket: WebSocket) -> str:
@@ -98,4 +98,6 @@ class MCPAddon(BaseServerAddon):
         if not settings_model_cls:
             msg = "Settings model class is not defined."
             raise RuntimeError(msg)
-        return settings_model_cls(**DEFAULT_VALUES)
+        return settings_model_cls(
+            **DEFAULT_VALUES, endpoint_url=await get_endpoint_url()
+        )
